@@ -5,7 +5,7 @@ locals {
 }
 
 resource "aws_s3_bucket" "this" {
-  # checkov:skip=CKV_AWS_18:Access logging needs a log bucket; arrives with the logging module. CloudTrail data events cover object access meanwhile.
+  # checkov:skip=CKV_AWS_18:Access logging needs a log bucket; arrives with the logging module. There is no access logging until then.
   # checkov:skip=CKV_AWS_144:Replication to ap-south-2 arrives with the disaster-recovery plan. Data must stay in India; anchors hold no personal data.
   # checkov:skip=CKV_AWS_145:Customer-managed KMS key arrives with the KMS module; AES256 applies until then.
   # checkov:skip=CKV2_AWS_62:Nothing consumes anchor-write events yet.

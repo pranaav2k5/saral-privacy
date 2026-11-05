@@ -22,4 +22,9 @@ variable "retention_years" {
     condition     = var.retention_years >= 1
     error_message = "retention_years must be at least 1."
   }
+
+  validation {
+    condition     = var.environment != "prod" || (var.retention_years >= 7 && var.retention_years <= 10)
+    error_message = "In prod, retention_years must be between 7 and 10. COMPLIANCE mode cannot be shortened or removed by anyone, so a typo would lock objects for decades."
+  }
 }

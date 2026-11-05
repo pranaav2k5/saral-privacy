@@ -114,3 +114,53 @@ run "incomplete_multipart_uploads_are_aborted" {
     error_message = "incomplete multipart uploads must be aborted after 7 days"
   }
 }
+
+run "prod_retention_below_seven_years_is_rejected" {
+  command = plan
+
+  variables {
+    environment     = "prod"
+    retention_years = 6
+  }
+
+  expect_failures = [var.retention_years]
+}
+
+run "prod_retention_above_ten_years_is_rejected" {
+  command = plan
+
+  variables {
+    environment     = "prod"
+    retention_years = 11
+  }
+
+  expect_failures = [var.retention_years]
+}
+
+run "prod_accepts_ten_years" {
+  command = plan
+
+  variables {
+    environment     = "prod"
+    retention_years = 10
+  }
+
+  assert {
+    condition     = aws_s3_bucket_object_lock_configuration.this.rule[0].default_retention[0].years == 10
+    error_message = "prod must accept a 10 year retention"
+  }
+}
+
+run "non_prod_may_use_short_retention" {
+  command = plan
+
+  variables {
+    environment     = "dev"
+    retention_years = 1
+  }
+
+  assert {
+    condition     = aws_s3_bucket_object_lock_configuration.this.rule[0].default_retention[0].years == 1
+    error_message = "dev must accept a 1 year retention"
+  }
+}
