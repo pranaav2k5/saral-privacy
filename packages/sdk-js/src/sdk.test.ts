@@ -241,6 +241,56 @@ describe("granting", () => {
   });
 });
 
+describe("a host page whose identifier callback fails", () => {
+  const callbacks: [string, NonNullable<InitOptions["identifier"]>][] = [
+    ["rejects", async () => { throw new Error("session expired"); }],
+    ["throws", () => { throw new Error("not logged in"); }],
+    ["returns something that is not a string", (() => 42) as unknown as () => string],
+    ["returns nothing", () => undefined],
+  ];
+
+  test.each(callbacks)("when it %s, the dialog says so and stays usable instead of freezing", async (_n, identifier) => {
+    const { calls } = start({ identifier });
+    button("Accept all").click();
+    await flush();
+    expect(calls).toHaveLength(0);
+    expect(alertText()).toMatch(/email address or phone number/i);
+    expect(button("Accept all").disabled).toBe(false);
+    expect(dialog()).not.toBeNull();
+  });
+
+  test("after the page fixes it, the next click works", async () => {
+    let known: string | undefined = undefined;
+    const { calls } = start({ identifier: () => known });
+    button("Accept all").click();
+    await flush();
+    expect(calls).toHaveLength(0);
+    known = "back@example.org";
+    button("Accept all").click();
+    await flush();
+    expect(calls).toHaveLength(1);
+    expect(dialog()).toBeNull();
+  });
+
+  test("withdrawing with a failing callback also says so, and can be retried", async () => {
+    let known: string | undefined = "known@example.org";
+    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { status: "withdrawn", consentIds: ["c1"] }) : json(201, GRANTED)));
+    const { sdk } = start({ fetch: f.fn, identifier: () => known });
+    button("Accept all").click();
+    await flush();
+    known = undefined;
+    (document.querySelector("button.sp-opener") as HTMLButtonElement).click();
+    button("Withdraw consent").click();
+    await flush();
+    expect(alertText()).toMatch(/email address or phone number/i);
+    expect(button("Withdraw consent").disabled).toBe(false);
+    known = "known@example.org";
+    button("Withdraw consent").click();
+    await flush();
+    expect(sdk.getConsent()).toBeNull();
+  });
+});
+
 describe("rejecting", () => {
   test("Reject all sends nothing, closes, and is remembered so the banner does not come back", async () => {
     const { calls, sdk, states } = start();
@@ -292,7 +342,7 @@ describe("what the browser keeps", () => {
 
 describe("withdrawing", () => {
   async function grantFirst(options: Partial<InitOptions> = {}) {
-    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { consentId: "c1", status: "withdrawn", withdrawnAt: "2026-11-06T10:00:00.000Z" }) : json(201, GRANTED)));
+    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { status: "withdrawn", consentIds: ["c1"], withdrawnAt: "2026-11-06T10:00:00.000Z" }) : json(201, GRANTED)));
     const made = start({ fetch: f.fn, ...options });
     const input = identifierInput();
     if (input) type(input, "person@example.org"); // absent when the host page supplies the identifier
@@ -310,8 +360,9 @@ describe("withdrawing", () => {
     type(identifierInput() as HTMLInputElement, "person@example.org");
     button("Withdraw consent").click();
     await flush();
-    expect(calls.map((c) => c.url)).toEqual(["https://api.example.org/v1/consents", "https://api.example.org/v1/consents/c1/withdraw"]);
-    expect(calls[1]?.body).toEqual({ identifier: "person@example.org" });
+    expect(calls.map((c) => c.url)).toEqual(["https://api.example.org/v1/consents", "https://api.example.org/v1/consents/withdraw"]);
+    // By identifier alone: it works on a device that never held the consent id, and withdraws every consent of the person.
+    expect(calls[1]?.body).toEqual({ identifier: "person@example.org", noticeId: NOTICE });
     expect(states.at(-1)).toBeNull();
     expect(localStorage.length).toBe(0);
     expect(document.body.textContent).toContain("withdrawn");
@@ -323,7 +374,7 @@ describe("withdrawing", () => {
     expect(identifierInput()).toBeNull();
     button("Withdraw consent").click();
     await flush();
-    expect(calls[1]?.body).toEqual({ identifier: "known@example.org" });
+    expect(calls[1]?.body).toEqual({ identifier: "known@example.org", noticeId: NOTICE });
   });
 
   test("a failed withdrawal keeps the consent on record, says so, and can be retried", async () => {
@@ -346,15 +397,13 @@ describe("withdrawing", () => {
     expect(sdk.getConsent()).toBeNull();
   });
 
-  test("a withdrawal the server says is already done (409) counts as done: the person's wish is met", async () => {
-    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(409, { error: "not_granted" }) : json(201, GRANTED)));
-    const { sdk, states } = start({ fetch: f.fn, identifier: "known@example.org" });
-    button("Accept all").click();
-    await flush();
+  test("withdrawal does not depend on a stored consent id: it works for a person whose browser holds only the decision", async () => {
+    const f = fakeFetch(() => json(200, { status: "withdrawn", consentIds: ["x", "y"] }));
+    const { sdk } = start({ fetch: f.fn, identifier: "known@example.org", openOnInit: false });
+    localStorage.setItem(`saral-privacy:${NOTICE}`, JSON.stringify({ decision: "granted", consentId: "c9", receiptId: "r9", purposes: { analytics: true }, at: "2026-11-06T09:00:00.000Z" }));
     await sdk.withdraw();
+    expect(f.calls[0]?.url).toBe("https://api.example.org/v1/consents/withdraw");
     expect(sdk.getConsent()).toBeNull();
-    expect(states.at(-1)).toBeNull();
-    expect(localStorage.length).toBe(0);
   });
 
   test("sdk.withdraw() does the same without the dialog, for pages that build their own UI", async () => {

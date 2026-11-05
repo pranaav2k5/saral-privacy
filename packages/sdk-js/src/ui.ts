@@ -119,9 +119,14 @@ export function init(options: InitOptions): SaralPrivacyInstance {
   const notify = (s: ConsentState | null) => options.onChange?.(s);
   const knownIdentifier = options.identifier !== undefined;
 
+  /** The host page's callback can throw, reject or return junk (a logged-out user, a failed request). All of that means "no identifier". */
   async function resolveIdentifier(): Promise<string | undefined> {
-    const given = typeof options.identifier === "function" ? await options.identifier() : (options.identifier ?? identifierValue);
-    return given?.trim() ? given.trim() : undefined;
+    try {
+      const given = typeof options.identifier === "function" ? await options.identifier() : (options.identifier ?? identifierValue);
+      return typeof given === "string" && given.trim() !== "" ? given.trim() : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   function fail(message: string, bad = false): void {
@@ -172,17 +177,18 @@ export function init(options: InitOptions): SaralPrivacyInstance {
 
   async function withdraw(): Promise<void> {
     const current = store.read();
-    if (pending || current?.decision !== "granted" || current.consentId === undefined) return;
+    if (pending || current?.decision !== "granted") return;
     pending = true;
     const identifier = await resolveIdentifier();
     if (identifier === undefined || !isIdentifier(identifier)) return fail(t.errIdentifier, !knownIdentifier);
     error = "";
     invalidIdentifier = false;
     render();
-    const out = await postJson(doFetch, `${apiBase}/v1/consents/${encodeURIComponent(current.consentId)}/withdraw`, options.publishableKey, { identifier });
+    // By identifier and notice, not by consent id: it works on a device that never held the id, and it withdraws every
+    // consent the person has for this notice (a second device, or a retry that was recorded twice).
+    const out = await postJson(doFetch, `${apiBase}/v1/consents/withdraw`, options.publishableKey, { identifier, noticeId: options.noticeId });
     if (out.kind === "network") return fail(t.errNetwork);
-    // 409 means it was already withdrawn: the person's wish is met either way.
-    if (out.kind === "http" && out.status !== 409) return fail(out.status === 401 || out.status === 403 ? t.errAuth : t.errWithdraw);
+    if (out.kind === "http") return fail(out.status === 401 || out.status === 403 ? t.errAuth : t.errWithdraw);
     store.clear();
     for (const k of choices.keys()) choices.set(k, false);
     pending = false;
