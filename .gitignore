@@ -1,0 +1,33 @@
+# dependencies and build output
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+
+# secrets: only .env.example may be committed
+.env
+.env.*
+!.env.example
+
+# agent workspace (scratch)
+.superpowers/
+
+# python
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# terraform (lock files ARE committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/

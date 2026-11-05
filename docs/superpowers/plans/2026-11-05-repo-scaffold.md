@@ -82,7 +82,7 @@ Every TypeScript workspace exposes these scripts so root `pnpm -r` commands work
 - [ ] **Step 5: Secret-file guard (Review Focus 1).**
   - `git check-ignore .env .env.local` prints both paths. `git check-ignore .env.example` exits 1 (not ignored).
   - `gitleaks detect --source . --no-git` exits 0.
-  - Prove detection: write a throwaway file `/tmp/leak.txt` containing a fake AWS key line `aws_access_key_id = AKIAIOSFODNN7EXAMPLE` and `aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY`, run `gitleaks detect --source /tmp --no-git`, expect exit 1, then delete the file. Nothing is committed.
+  - Prove detection: write a throwaway file `/tmp/leak.txt` containing a fake AWS key line built at runtime so no key literal is ever committed: `printf 'aws_access_key_id = AKIA%s\n' QYLPMN5HHHFPZAM2` (a fake key that gitleaks detects; the AWS docs `...EXAMPLE` keys are allowlisted and are not detected), run `gitleaks detect --source /tmp --no-git`, expect exit 1, then delete the file. Nothing is committed.
 - [ ] **Step 6: Commit** (`chore: add pnpm workspace, shared tooling, and schemas package`).
 
 ### Task 2: `packages/sdk-js` with a size budget
