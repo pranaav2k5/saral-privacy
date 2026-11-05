@@ -123,7 +123,7 @@ describe("tenant isolation", () => {
 
   test("every tenant-owned table has a policy that also checks writes", async () => {
     const r = await db.owner.query(
-      "SELECT tablename, with_check IS NOT NULL AS checks_writes FROM pg_policies WHERE schemaname = 'public' AND tablename = ANY($1)",
+      "SELECT tablename, with_check IS NOT NULL AS checks_writes FROM pg_policies WHERE schemaname = 'public' AND policyname = 'tenant_isolation' AND tablename = ANY($1)",
       [[...TENANT_TABLES, "tenants"]],
     );
     expect(r.rowCount).toBe(TENANT_TABLES.length + 1);

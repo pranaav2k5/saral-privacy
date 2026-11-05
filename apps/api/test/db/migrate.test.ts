@@ -22,7 +22,7 @@ afterEach(async () => {
 describe("migrate", () => {
   test("applies every migration once and does nothing the second time", async () => {
     const first = await migrate(db.owner);
-    expect(first).toEqual(["0001_core.sql", "0002_audit_log.sql"]);
+    expect(first).toEqual(["0001_core.sql", "0002_audit_log.sql", "0003_api_keys.sql"]);
     expect(await migrate(db.owner)).toEqual([]);
     const rows = await db.owner.query("SELECT name, sha256 FROM schema_migrations ORDER BY name");
     expect(rows.rows.map((r: { name: string }) => r.name)).toEqual(first);
@@ -79,7 +79,7 @@ describe("migrate command", () => {
   test("applies the migrations, then reports that the database is up to date", () => {
     const first = run({ DATABASE_URL: db.url });
     expect(first.status).toBe(0);
-    expect(first.stdout).toContain("applied: 0001_core.sql, 0002_audit_log.sql");
+    expect(first.stdout).toContain("applied: 0001_core.sql, 0002_audit_log.sql, 0003_api_keys.sql");
     const second = run({ DATABASE_URL: db.url });
     expect(second.status).toBe(0);
     expect(second.stdout).toContain("database is up to date");
