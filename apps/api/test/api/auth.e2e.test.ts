@@ -17,11 +17,14 @@ afterAll(async () => {
   await api.stop();
 });
 
+let person = 0;
+
+// A new person each time: an identical consent from the same person is (correctly) returned as it is with 200, not recorded again.
 const post = (token: string | undefined, extra: Record<string, string> = {}) => {
   const r = api.http().post("/v1/consents").set(extra);
   return (token ? r.set("Authorization", `Bearer ${token}`) : r).send({
     noticeId: api.A.noticeId,
-    identifier: "+919876543210",
+    identifier: `+9199000${String(10000 + person++)}`,
     purposes: [{ key: "analytics", granted: true }],
   });
 };

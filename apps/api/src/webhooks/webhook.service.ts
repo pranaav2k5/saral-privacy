@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, UnprocessableEntityException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { sha256Hex } from "@saral/audit-chain";
 import type pg from "pg";
@@ -61,6 +61,37 @@ export class WebhookService {
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, url, [...events].sort(), 1])),
       });
       return { id, url, events, createdAt: row.created_at.toISOString(), disabledAt: null, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, 1)) };
+    });
+  }
+
+  /** Stops sending to an endpoint and frees its place in the cap. Events still waiting for it are closed by the worker. */
+  async disable(tenantId: string, keyId: string, id: string): Promise<void> {
+    await this.db.inScope({ tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
+      const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
+        "UPDATE webhook_endpoints SET disabled_at = now() WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version", [id]);
+      const e = r.rows[0];
+      if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
+      await this.audit.append(c, tenantId, {
+        actorType: "system", actorId: `api-key:${keyId}`, action: "webhook.endpoint_disabled", refTable: "webhook_endpoints", refId: id,
+        payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, e.url, [...e.events].sort(), e.secret_version])),
+      });
+    });
+  }
+
+  /** Replaces the signing secret. The new one is shown once; the old one stops working at once (later deliveries are signed with the new one). */
+  async rotate(tenantId: string, keyId: string, id: string): Promise<{ id: string; secret: string }> {
+    return this.db.inScope({ tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
+      const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
+        "UPDATE webhook_endpoints SET secret_version = secret_version + 1 WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version", [id]);
+      const e = r.rows[0];
+      if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
+      await this.audit.append(c, tenantId, {
+        actorType: "system", actorId: `api-key:${keyId}`, action: "webhook.endpoint_rotated", refTable: "webhook_endpoints", refId: id,
+        payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, e.url, [...e.events].sort(), e.secret_version])),
+      });
+      return { id, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, e.secret_version)) };
     });
   }
 

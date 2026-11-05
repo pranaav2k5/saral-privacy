@@ -1,3 +1,4 @@
+import { AuditService } from "../../src/audit/audit.service.js";
 import { PHONE, startApi, type Api } from "./harness.js";
 
 let api: Api;
@@ -67,6 +68,27 @@ describe("the audit log of the consent API", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: false, failure: "hash_mismatch", seqNo: "2" });
     expect((await verify(api.B)).body.ok).toBe(true); // the other tenant is unaffected
+  });
+});
+
+describe("a verify request is bounded", () => {
+  test("a chain larger than the limit is refused with advice to verify by day, instead of being loaded into memory", async () => {
+    const service = api.app.get(AuditService);
+    const original = service.maxEntries;
+    service.maxEntries = 2;
+    try {
+      const full = await verify(api.A);
+      expect(full.status).toBe(422);
+      expect(full.body).toMatchObject({ error: "too_large" });
+      expect(full.body.message).toMatch(/date=/);
+      const today = new Date().toISOString().slice(0, 10);
+      expect((await verify(api.A, `?date=${today}`)).status).toBe(422);
+      expect((await api.http().get(`/v1/audit/merkle-root?date=${today}`).set(auditor(api.A))).status).toBe(422);
+      expect((await verify(api.A, "?date=2000-01-01")).status).toBe(200); // an empty day is within the limit
+    } finally {
+      service.maxEntries = original;
+    }
+    expect((await verify(api.A)).status).toBe(200);
   });
 });
 

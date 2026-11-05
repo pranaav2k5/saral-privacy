@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Post, Res } from "@nestjs/common";
 import { Auth, Scopes, type AuthContext } from "../auth/access.js";
 import { bad, boolField, keyField, normalizeIdentifier, objectBody, uuidParam } from "../http/validate.js";
 import { ConsentService } from "./consent.service.js";
@@ -9,10 +9,13 @@ const MAX_PURPOSES = 50;
 export class ConsentsController {
   constructor(private readonly consents: ConsentService) {}
 
-  /** Records a consent and returns the signed receipt (a Kantara KI-CR-v1.1.0 JWT). */
+  /**
+   * Records a consent and returns the signed receipt (a Kantara KI-CR-v1.1.0 JWT): 201. If the same person already has an
+   * identical granted consent for the notice it is returned unchanged: 200, so a retry after a lost response is safe.
+   */
   @Post()
   @Scopes("sdk")
-  async grant(@Auth() auth: AuthContext, @Body() raw: unknown) {
+  async grant(@Auth() auth: AuthContext, @Body() raw: unknown, @Res({ passthrough: true }) res: { status(code: number): unknown }) {
     const body = objectBody(raw);
     const noticeId = uuidParam(body.noticeId, "noticeId");
     const identifier = normalizeIdentifier(body.identifier);
@@ -27,8 +30,20 @@ export class ConsentsController {
       seen.add(key);
       return { key, granted: boolField(o.granted, `purposes[${String(i)}].granted`) };
     });
-    const result = await this.consents.grant(auth.tenantId, { noticeId, identifier, purposes, keyKind: auth.kind });
+    const { reused, ...result } = await this.consents.grant(auth.tenantId, { noticeId, identifier, purposes, keyKind: auth.kind });
+    if (reused) res.status(200);
     return { ...result, status: "granted" as const };
+  }
+
+  /** Withdraws every granted consent of the person, found by identifier alone (optionally for one notice). */
+  @Post("withdraw")
+  @HttpCode(200)
+  @Scopes("sdk")
+  withdrawAll(@Auth() auth: AuthContext, @Body() raw: unknown) {
+    const body = objectBody(raw);
+    const identifier = normalizeIdentifier(body.identifier);
+    const noticeId = body.noticeId === undefined ? undefined : uuidParam(body.noticeId, "noticeId");
+    return this.consents.withdrawAll(auth.tenantId, identifier, noticeId);
   }
 
   /** Withdraws a consent as easily as it was given. The caller proves who they are with the same identifier. */

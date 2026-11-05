@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { verifyReceipt } from "@saral/receipts";
-import { PHONE, startApi, type Api } from "./harness.js";
+import { connect, sha256, NOTICE_TEXT } from "../db/helpers.js";
+import { PHONE, PUBLIC_BASE_URL, startApi, type Api } from "./harness.js";
 
 let api: Api;
 
@@ -28,7 +29,16 @@ describe("POST /v1/consents", () => {
     // Only granted purposes are on the receipt; details and retention come from the notice, not the caller.
     expect(claims.services[0]?.purposes.map((p) => p.purposeCategory[0])).toEqual(["analytics"]);
     expect(claims.piiControllers[0]?.piiController).toBe("Example Controller Pvt Ltd");
-    expect(claims.policyUrl).toBe("https://example.org/privacy");
+    // The receipt points to the published notice, which never changes, not to a page the tenant can edit later.
+    expect(claims.policyUrl).toBe(`${PUBLIC_BASE_URL}/v1/notices/${api.A.noticeId}`);
+  });
+
+  test("the receipt names the consent and the exact notice text, so a person holding only the receipt can tell what it covers", async () => {
+    const res = await api.grant(api.A, { identifier: "+919830000001" });
+    const claims = await verifyReceipt(res.body.receipt, api.keys.jwks());
+    expect(claims.saralConsentId).toBe(res.body.consentId);
+    expect(claims.saralNoticeId).toBe(api.A.noticeId);
+    expect(claims.saralNoticeSha256).toBe(sha256(NOTICE_TEXT));
   });
 
   test("the same person gets the same principal each time, and a different one in another tenant", async () => {
@@ -112,6 +122,97 @@ describe("POST /v1/consents", () => {
     const res = await api.http().post("/v1/consents").set(bearer(api.A.pk)).send(body === undefined ? undefined : { noticeId: api.A.noticeId, identifier: PHONE, purposes: [{ key: "analytics", granted: true }], ...body });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("invalid_request");
+  });
+});
+
+describe("granting the same thing twice", () => {
+  const body = { identifier: "+919840000001", purposes: [{ key: "analytics", granted: true }, { key: "marketing", granted: false }] };
+
+  test("an identical consent that is already on record is returned as it is (200), not recorded again: a retry after a lost response is safe", async () => {
+    const first = await api.grant(api.A, body);
+    expect(first.status).toBe(201);
+    const auditBefore = (await api.db.owner.query("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1", [api.A.id])).rows[0].n as number;
+    const second = await api.grant(api.A, { ...body, purposes: [...body.purposes].reverse() }); // order does not matter
+    expect(second.status).toBe(200);
+    expect(second.body).toEqual(first.body);
+    expect((await api.db.owner.query("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1", [api.A.id])).rows[0].n).toBe(auditBefore);
+    expect((await api.db.owner.query("SELECT count(*)::int AS n FROM consent_records WHERE id = $1", [first.body.consentId])).rows[0].n).toBe(1);
+  });
+
+  test("identical requests that arrive at the same moment record one consent, not several", async () => {
+    // The person already exists (a new person would serialise on the unique principal row, hiding the race).
+    await api.grant(api.A, { identifier: "+919840000077", purposes: [{ key: "analytics", granted: true }, { key: "marketing", granted: true }] });
+    const same = { identifier: "+919840000077", purposes: [{ key: "analytics", granted: true }] };
+    // Hold the tenant's lock so that all eight requests are in flight, past validation, at the same moment; then let them go.
+    const holder = await connect(api.db);
+    await holder.query("BEGIN");
+    await holder.query("SELECT audit_append_lock($1)", [api.A.id]);
+    const pending = Array.from({ length: 8 }, () => api.grant(api.A, same).then((r) => r));
+    await new Promise((r) => setTimeout(r, 500));
+    await holder.query("COMMIT");
+    await holder.end();
+    const results = await Promise.all(pending);
+    expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+    expect(results.filter((r) => r.status === 200)).toHaveLength(7);
+    expect(new Set(results.map((r) => r.body.consentId)).size).toBe(1);
+    const count = (await api.db.owner.query("SELECT count(*)::int AS n FROM consent_records WHERE id = $1", [results[0]?.body.consentId])).rows[0].n;
+    expect(count).toBe(1);
+  });
+
+  test("a different choice is a new consent (201), and a withdrawn consent is not reused", async () => {
+    const one = await api.grant(api.A, { identifier: "+919840000002", purposes: [{ key: "analytics", granted: true }] });
+    const two = await api.grant(api.A, { identifier: "+919840000002", purposes: [{ key: "analytics", granted: true }, { key: "marketing", granted: true }] });
+    expect(two.status).toBe(201);
+    expect(two.body.consentId).not.toBe(one.body.consentId);
+    await api.http().post(`/v1/consents/${one.body.consentId}/withdraw`).set(bearer(api.A.pk)).send({ identifier: "+919840000002" });
+    const again = await api.grant(api.A, { identifier: "+919840000002", purposes: [{ key: "analytics", granted: true }] });
+    expect(again.status).toBe(201);
+    expect(again.body.consentId).not.toBe(one.body.consentId);
+  });
+});
+
+describe("withdrawing with only the identifier", () => {
+  const withdrawAll = (token: string, body: Record<string, unknown>) => api.http().post("/v1/consents/withdraw").set(bearer(token)).send(body);
+
+  test("withdraws every consent the person has, on any device, without knowing a consent id; each one is audited", async () => {
+    const id = "+919850000001";
+    const a = (await api.grant(api.A, { identifier: id, purposes: [{ key: "analytics", granted: true }, { key: "marketing", granted: true }] })).body;
+    const b = (await api.grant(api.A, { identifier: id, purposes: [{ key: "analytics", granted: true }] })).body;
+    const before = (await api.db.owner.query("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'consent.withdrawn'", [api.A.id])).rows[0].n as number;
+    const res = await withdrawAll(api.A.pk, { identifier: id, noticeId: api.A.noticeId });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("withdrawn");
+    expect([...res.body.consentIds].sort()).toEqual([a.consentId, b.consentId].sort());
+    const states = (await api.db.owner.query("SELECT status FROM consent_records WHERE id = ANY($1)", [[a.consentId, b.consentId]])).rows.map((r: { status: string }) => r.status);
+    expect(states).toEqual(["withdrawn", "withdrawn"]);
+    expect((await api.db.owner.query("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'consent.withdrawn'", [api.A.id])).rows[0].n).toBe(before + 2);
+    expect((await api.http().get("/v1/audit/verify").set(bearer(api.A.auditor))).body.ok).toBe(true);
+    expect((await withdrawAll(api.A.pk, { identifier: id })).status).toBe(404); // nothing left to withdraw
+  });
+
+  test("a wrong identifier, another tenant, or another notice finds nothing and changes nothing", async () => {
+    const id = "+919850000002";
+    const g = (await api.grant(api.A, { identifier: id })).body;
+    expect((await withdrawAll(api.A.pk, { identifier: "+919850000009" })).status).toBe(404);
+    expect((await withdrawAll(api.B.pk, { identifier: id })).status).toBe(404);
+    expect((await withdrawAll(api.A.pk, { identifier: id, noticeId: api.B.noticeId })).status).toBe(404);
+    expect((await api.db.owner.query("SELECT status FROM consent_records WHERE id = $1", [g.consentId])).rows[0].status).toBe("granted");
+  });
+
+  test("needs the sdk scope and a valid body", async () => {
+    expect((await withdrawAll(api.A.admin, { identifier: PHONE })).status).toBe(403);
+    expect((await withdrawAll(api.A.pk, { identifier: "nope" })).status).toBe(400);
+    expect((await withdrawAll(api.A.pk, { identifier: PHONE, noticeId: "nope" })).status).toBe(400);
+    expect((await api.http().post("/v1/consents/withdraw").send({ identifier: PHONE })).status).toBe(401);
+  });
+
+  test("queues a withdrawal event for each consent", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1", [api.A.id]);
+    const ep = "ffffffff-ffff-4fff-8fff-ffffffffff01";
+    await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES ($1, $2, 'https://w.example.org/x', '{consent.withdrawn}')", [ep, api.A.id]);
+    await api.grant(api.A, { identifier: "+919850000003" });
+    await withdrawAll(api.A.pk, { identifier: "+919850000003" });
+    expect((await api.db.owner.query("SELECT count(*)::int AS n FROM webhook_deliveries WHERE endpoint_id = $1", [ep])).rows[0].n).toBe(1);
   });
 });
 

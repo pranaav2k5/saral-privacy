@@ -52,11 +52,11 @@ export class WebhookWorker {
        FROM (SELECT d2.id FROM webhook_deliveries d2
              -- The conditions are repeated here on the locked row: after waiting for a concurrent claim, Postgres rechecks
              -- only the conditions of the locking query, so without them a row that was just claimed could be claimed again.
-             WHERE d2.state = 'pending' AND d2.next_attempt_at <= $1
+             WHERE d2.state = 'pending' AND d2.next_attempt_at <= $1 AND d2.attempts < ${String(MAX_ATTEMPTS)}
                AND d2.id IN (SELECT x.id FROM (
                      SELECT d3.id, row_number() OVER (PARTITION BY d3.tenant_id ORDER BY d3.next_attempt_at, d3.created_at) AS rn
                      FROM webhook_deliveries d3 JOIN webhook_endpoints e ON e.id = d3.endpoint_id
-                     WHERE d3.state = 'pending' AND d3.next_attempt_at <= $1 AND e.disabled_at IS NULL) x
+                     WHERE d3.state = 'pending' AND d3.next_attempt_at <= $1 AND d3.attempts < ${String(MAX_ATTEMPTS)} AND e.disabled_at IS NULL) x
                    WHERE x.rn <= $4)
              ORDER BY d2.next_attempt_at, d2.created_at LIMIT $3 FOR UPDATE OF d2 SKIP LOCKED) due
        WHERE d.id = due.id
@@ -66,8 +66,21 @@ export class WebhookWorker {
     return r.rows.sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
   }
 
+  /**
+   * Closes deliveries that can never be sent: a worker that died while sending the 15th attempt leaves the row pending
+   * at 15 (it would otherwise be claimed again, push `attempts` past its limit and fail the whole claim for every tenant),
+   * and events waiting for an endpoint that was disabled.
+   */
+  async sweep(c: pg.ClientBase, now: Date): Promise<void> {
+    await c.query("UPDATE webhook_deliveries SET state = 'failed', last_error = 'abandoned after 15 attempts' WHERE state = 'pending' AND attempts >= $2 AND next_attempt_at <= $1", [now, MAX_ATTEMPTS]);
+    await c.query("UPDATE webhook_deliveries d SET state = 'failed', last_error = 'endpoint disabled' FROM webhook_endpoints e WHERE d.endpoint_id = e.id AND e.disabled_at IS NOT NULL AND d.state = 'pending'");
+  }
+
   async runOnce(now: Date): Promise<RunResult> {
-    const claimed = await this.db.asWorker((c) => this.claim(c, now));
+    const claimed = await this.db.asWorker(async (c) => {
+      await this.sweep(c, now);
+      return this.claim(c, now);
+    });
     const result: RunResult = { delivered: 0, retried: 0, failed: 0, released: 0 };
     if (claimed.length === 0) return result;
 

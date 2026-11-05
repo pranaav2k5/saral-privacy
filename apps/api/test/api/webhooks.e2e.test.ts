@@ -96,6 +96,77 @@ describe("registering endpoints", () => {
   });
 });
 
+describe("disabling and rotating endpoints", () => {
+  const del = (token: string, id: string) => api.http().delete(`/v1/webhook-endpoints/${id}`).set(bearer(token));
+  const rotate = (token: string, id: string) => api.http().post(`/v1/webhook-endpoints/${id}/rotate-secret`).set(bearer(token));
+  const make = async (tenant: { admin: string }, name: string) => (await register(tenant.admin, { url: `https://${name}.example.org/x`, events: ["consent.granted"] })).body as { id: string; secret: string };
+
+  test("a tenant admin can disable an endpoint: it frees a slot, is listed as disabled, and the change is audited", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]);
+    const e = await make(api.B, "todisable");
+    const before = (await rows("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'webhook.endpoint_disabled'", [api.B.id]))[0]?.n as number;
+    expect((await del(api.B.admin, e.id)).status).toBe(204);
+    const listed = (await api.http().get("/v1/webhook-endpoints").set(bearer(api.B.admin))).body.find((x: { id: string }) => x.id === e.id);
+    expect(listed.disabledAt).not.toBeNull();
+    expect((await rows("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'webhook.endpoint_disabled'", [api.B.id]))[0]?.n).toBe(before + 1);
+    expect((await del(api.B.admin, e.id)).status).toBe(404); // already disabled
+  });
+
+  test("a disabled endpoint's cap slot is free again: ten can be registered after disabling ten", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]);
+    const made: string[] = [];
+    for (let i = 0; i < 10; i++) made.push((await make(api.B, `slot${String(i)}`)).id);
+    expect((await register(api.B.admin, { url: "https://eleven.example.org/x", events: ["consent.granted"] })).status).toBe(409);
+    expect((await del(api.B.admin, made[0] as string)).status).toBe(204);
+    expect((await register(api.B.admin, { url: "https://eleven.example.org/x", events: ["consent.granted"] })).status).toBe(201);
+  });
+
+  test("events still waiting for a disabled endpoint are marked failed, not left to pile up", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.A.id]);
+    const e = await make(api.A, "pending-then-off");
+    await api.grant(api.A, { identifier: "+919820000001" });
+    expect((await rows("SELECT count(*)::int AS n FROM webhook_deliveries WHERE endpoint_id = $1 AND state = 'pending'", [e.id]))[0]?.n).toBe(1);
+    await del(api.A.admin, e.id);
+    api.hooks.calls = [];
+    await worker.runOnce(new Date());
+    expect(api.hooks.calls).toHaveLength(0);
+    expect((await rows("SELECT state, last_error FROM webhook_deliveries WHERE endpoint_id = $1", [e.id]))[0]).toEqual({ state: "failed", last_error: "endpoint disabled" });
+  });
+
+  test("rotating gives a new secret, signs later deliveries with it, and the old secret stops verifying", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.A.id]);
+    const e = await make(api.A, "rotating");
+    const res = await rotate(api.A.admin, e.id);
+    expect(res.status).toBe(200);
+    expect(res.body.secret).toMatch(/^whsec_/);
+    expect(res.body.secret).not.toBe(e.secret);
+    expect(res.body.secret).toBe(`whsec_${Buffer.from(endpointSecret(api.keys.webhookKey(), e.id, 2)).toString("base64url")}`);
+    await api.grant(api.A, { identifier: "+919820000002" });
+    api.hooks.calls = [];
+    await worker.runOnce(new Date());
+    const call = api.hooks.calls.find((c) => c.url === "https://rotating.example.org/x") as { body: string; headers: Record<string, string> };
+    const now = Math.floor(Date.now() / 1000);
+    expect(verifyWebhookSignature(endpointSecret(api.keys.webhookKey(), e.id, 2), call.headers["X-Saral-Signature"] as string, call.body, now)).toBe(true);
+    expect(verifyWebhookSignature(endpointSecret(api.keys.webhookKey(), e.id, 1), call.headers["X-Saral-Signature"] as string, call.body, now)).toBe(false);
+    expect((await rows("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'webhook.endpoint_rotated'", [api.A.id]))[0]?.n).toBeGreaterThanOrEqual(1);
+  });
+
+  test("only the owning tenant's admin may disable or rotate; others get 404, scopes get 403, bad ids get 400, disabled endpoints cannot be rotated", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.A.id]);
+    const e = await make(api.A, "guarded");
+    expect((await del(api.B.admin, e.id)).status).toBe(404);
+    expect((await rotate(api.B.admin, e.id)).status).toBe(404);
+    for (const token of [api.A.pk, api.A.auditor, api.A.dpo]) {
+      expect((await del(token, e.id)).status).toBe(403);
+      expect((await rotate(token, e.id)).status).toBe(403);
+    }
+    expect((await del(api.A.admin, "nope")).status).toBe(400);
+    expect((await rotate(api.A.admin, "nope")).status).toBe(400);
+    await del(api.A.admin, e.id);
+    expect((await rotate(api.A.admin, e.id)).status).toBe(404);
+  });
+});
+
 describe("the outbox and delivery", () => {
   let endpointId: string;
 
@@ -277,6 +348,24 @@ describe("the outbox and delivery", () => {
     });
   });
 
+  test("a delivery left at 15 attempts by a crashed worker is marked failed and does not block anyone else", async () => {
+    await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = NULL WHERE id = $1", [endpointId]);
+    const stuck = uid("e", 9001);
+    await api.db.owner.query(
+      "INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_type, payload, attempts, next_attempt_at) VALUES ($1, $2, $3, 'consent.granted', '{}', 15, now() - interval '10 minutes')",
+      [stuck, api.A.id, endpointId],
+    );
+    await api.grant(api.A, { identifier: "+919810000001" });
+    api.hooks.calls = [];
+    const result = await worker.runOnce(new Date());
+    expect(result.delivered).toBe(1);
+    const row = (await rows("SELECT state, attempts, last_error FROM webhook_deliveries WHERE id = $1", [stuck]))[0] as { state: string; attempts: number; last_error: string };
+    expect(row).toMatchObject({ state: "failed", attempts: 15 });
+    expect(row.last_error).toMatch(/abandoned/);
+    expect(api.hooks.calls.every((c) => !c.body.includes(stuck))).toBe(true);
+  });
+
   test("a failing endpoint is retried later with backoff, then marked failed after 15 attempts", async () => {
     await api.grant(api.A, { identifier: "+919800000001" });
     api.hooks.script = [500];
@@ -307,7 +396,7 @@ describe("the outbox and delivery", () => {
     ["a network error is a failure", "throw" as const],
   ])("%s", async (_n, outcome) => {
     await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
-    await api.grant(api.A, { identifier: "+919800000002" });
+    await api.grant(api.A, { identifier: `+9198000002${String(String(_n).length)}${String(String(outcome).length)}` });
     api.hooks.script = [outcome];
     const r = await worker.runOnce(new Date());
     expect(r.retried).toBe(1);

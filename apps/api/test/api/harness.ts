@@ -13,6 +13,7 @@ import { NOTICE_TEXT, TENANT_A, TENANT_B, createTestDb, sha256, uid, type TestDb
 export const MASTER = "test-master-secret-that-is-at-least-32-characters-long";
 export const PHONE = "+919876543210";
 export const ORIGIN = "https://shop.example.org";
+export const PUBLIC_BASE_URL = "https://api.example.org";
 
 export const DEFINITIONS = [
   {
@@ -98,7 +99,7 @@ export interface Api {
 
 export async function startApi(): Promise<Api> {
   const db = await createTestDb();
-  const settings: Settings = { databaseUrl: db.url, nodeEnv: "test", devMasterSecret: MASTER };
+  const settings: Settings = { databaseUrl: db.url, nodeEnv: "test", devMasterSecret: MASTER, publicBaseUrl: PUBLIC_BASE_URL };
   const hooks = new FakeWebhookHttp();
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(SETTINGS).useValue(settings)

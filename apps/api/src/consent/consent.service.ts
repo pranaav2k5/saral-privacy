@@ -8,6 +8,8 @@ import { AuditService } from "../audit/audit.service.js";
 import type { ApiKeyKind } from "../auth/api-keys.js";
 import { Database } from "../db/database.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
+import { SETTINGS, type Settings } from "../settings.js";
+import { receiptPolicyUrl } from "./policy-url.js";
 import { WebhookService } from "../webhooks/webhook.service.js";
 
 export interface GrantInput {
@@ -62,6 +64,7 @@ export class ConsentService {
     private readonly audit: AuditService,
     private readonly webhooks: WebhookService,
     @Inject(KEY_PROVIDER) private readonly keys: KeyProvider,
+    @Inject(SETTINGS) private readonly settings: Settings,
   ) {}
 
   /** Keyed HMAC of the person's identifier and the tenant (decision D12). Tenant-scoped, so tenants cannot link people. */
@@ -69,7 +72,8 @@ export class ConsentService {
     return createHmac("sha256", this.keys.pseudonymKey()).update(JSON.stringify(["saral.principal", identifier, tenantId])).digest("hex");
   }
 
-  async grant(tenantId: string, input: GrantInput): Promise<{ consentId: string; receiptId: string; receipt: string }> {
+  /** `reused` is true when an identical consent was already on record and is returned unchanged. */
+  async grant(tenantId: string, input: GrantInput): Promise<{ consentId: string; receiptId: string; receipt: string; reused: boolean }> {
     const pseudonym = this.pseudonym(input.identifier, tenantId);
     const collectionMethod: CollectionMethod = input.keyKind === "publishable" ? "web_sdk" : "api";
     return this.db.inScope({ tenantId }, async (c) => {
@@ -84,11 +88,25 @@ export class ConsentService {
         if (d === undefined) throw new UnprocessableEntityException({ error: "unknown_purpose", message: `the notice does not define the purpose ${p.key}` });
         return { key: p.key, granted: p.granted, retentionDays: d.retentionDays };
       });
+      // One stored order (by key), so the same choices always compare equal and hash the same.
+      purposes.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
       if (!purposes.some((p) => p.granted)) {
         throw new UnprocessableEntityException({ error: "nothing_granted", message: "at least one purpose must be granted; a consent that grants nothing is not recorded" });
       }
 
+      // Serialise grants for the tenant before looking for an identical consent, so two identical requests at the
+      // same moment cannot both miss each other and record twice.
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const principalId = await this.principal(c, tenantId, pseudonym);
+      const same = (await c.query<{ consent_id: string; receipt_id: string; jwt: string }>(
+        `SELECT r.id AS consent_id, rc.id AS receipt_id, rc.jwt FROM consent_records r
+         JOIN consent_receipts rc ON rc.tenant_id = r.tenant_id AND rc.consent_id = r.id
+         WHERE r.principal_id = $1 AND r.notice_id = $2 AND r.status = 'granted' AND r.purposes = $3::jsonb
+         ORDER BY r.granted_at DESC LIMIT 1`,
+        [principalId, notice.id, JSON.stringify(purposes)],
+      )).rows[0];
+      // The same person choosing the same thing again (a retry after a lost response, a second device) is not a new consent.
+      if (same !== undefined) return { consentId: same.consent_id, receiptId: same.receipt_id, receipt: same.jwt, reused: true };
       const consentId = randomUUID();
       const grantedAt = new Date();
       const fields: ConsentFields = {
@@ -108,7 +126,8 @@ export class ConsentService {
       try {
         const claims = buildReceiptClaims({
           receiptId, principalId, consentedAt: grantedAt, collectionMethod: COLLECTION[collectionMethod], language: notice.language,
-          controller: profile.controller as PiiController, policyUrl: profile.policyUrl as string, service: profile.service as string,
+          controller: profile.controller as PiiController, policyUrl: receiptPolicyUrl(this.settings.publicBaseUrl, profile.policyUrl, notice.id) as string, service: profile.service as string,
+          consentId, noticeId: notice.id, noticeSha256: notice.canonical_sha256,
           purposes: purposes.filter((p) => p.granted).map((p): ReceiptPurpose => {
             const d = defs.get(p.key) as PurposeDefinition;
             return {
@@ -132,7 +151,7 @@ export class ConsentService {
         consentId, receiptId, noticeId: notice.id, principalId, collectionMethod, status: "granted",
         purposes: purposes.map((p) => ({ key: p.key, granted: p.granted })),
       });
-      return { consentId, receiptId, receipt: jwt };
+      return { consentId, receiptId, receipt: jwt, reused: false };
     });
   }
 
@@ -144,7 +163,20 @@ export class ConsentService {
     return (await c.query<{ id: string }>("SELECT id FROM tenant_principals WHERE pseudonym_hmac = $1", [pseudonym])).rows[0]?.id as string;
   }
 
-  /** Withdraws a consent. The caller must prove they are the person: a wrong identifier looks the same as an unknown consent. */
+  /** Moves one granted consent to withdrawn, appends its audit entry and queues its webhook. Runs inside the caller's transaction. */
+  private async finish(c: pg.PoolClient, tenantId: string, row: ConsentRow, withdrawnAt: Date): Promise<void> {
+    await c.query("UPDATE consent_records SET status = 'withdrawn', withdrawn_at = $2 WHERE id = $1", [row.id, withdrawnAt]);
+    const after: ConsentFields = { ...toFields(row), status: "withdrawn", withdrawnAt: withdrawnAt.toISOString() };
+    await this.audit.append(c, tenantId, {
+      actorType: "principal", actorId: row.principal_id, action: "consent.withdrawn", refTable: "consent_records", refId: row.id,
+      payloadSha256: sha256Hex(canonicalConsentRecord(after)),
+    });
+    await this.webhooks.enqueue(c, tenantId, "consent.withdrawn", {
+      consentId: row.id, noticeId: row.notice_id, principalId: row.principal_id, status: "withdrawn", withdrawnAt: after.withdrawnAt as string,
+    });
+  }
+
+  /** Withdraws a consent by id. The caller must prove they are the person: a wrong identifier looks the same as an unknown consent. */
   async withdraw(tenantId: string, consentId: string, identifier: string): Promise<{ consentId: string; status: "withdrawn"; withdrawnAt: string }> {
     const claimed = Buffer.from(this.pseudonym(identifier, tenantId), "hex");
     return this.db.inScope({ tenantId }, async (c) => {
@@ -154,18 +186,29 @@ export class ConsentService {
       const actual = row ? Buffer.from(row.pseudonym_hmac, "hex") : Buffer.alloc(32);
       if (row === undefined || !timingSafeEqual(claimed, actual)) throw new NotFoundException({ error: "not_found", message: "consent not found" });
       if (row.status !== "granted") throw new ConflictException({ error: "not_granted", message: `the consent is already ${row.status}` });
-
       const withdrawnAt = new Date();
-      await c.query("UPDATE consent_records SET status = 'withdrawn', withdrawn_at = $2 WHERE id = $1", [consentId, withdrawnAt]);
-      const after: ConsentFields = { ...toFields(row), status: "withdrawn", withdrawnAt: withdrawnAt.toISOString() };
-      await this.audit.append(c, tenantId, {
-        actorType: "principal", actorId: row.principal_id, action: "consent.withdrawn", refTable: "consent_records", refId: consentId,
-        payloadSha256: sha256Hex(canonicalConsentRecord(after)),
-      });
-      await this.webhooks.enqueue(c, tenantId, "consent.withdrawn", {
-        consentId, noticeId: row.notice_id, principalId: row.principal_id, status: "withdrawn", withdrawnAt: after.withdrawnAt as string,
-      });
-      return { consentId, status: "withdrawn", withdrawnAt: after.withdrawnAt as string };
+      await this.finish(c, tenantId, row, withdrawnAt);
+      return { consentId, status: "withdrawn", withdrawnAt: withdrawnAt.toISOString() };
+    });
+  }
+
+  /**
+   * Withdraws every granted consent the person has (optionally for one notice), found by identifier alone. A person who
+   * lost the consent id, cleared their browser, or consented on another device can still withdraw. Nothing found, or a
+   * wrong identifier, is the same 404.
+   */
+  async withdrawAll(tenantId: string, identifier: string, noticeId?: string): Promise<{ status: "withdrawn"; consentIds: string[]; withdrawnAt: string }> {
+    const pseudonym = this.pseudonym(identifier, tenantId);
+    return this.db.inScope({ tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
+      const rows = (await c.query<ConsentRow>(
+        `SELECT r.*, p.pseudonym_hmac FROM consent_records r JOIN tenant_principals p ON p.tenant_id = r.tenant_id AND p.id = r.principal_id
+         WHERE p.pseudonym_hmac = $1 AND r.status = 'granted' AND ($2::uuid IS NULL OR r.notice_id = $2)
+         ORDER BY r.granted_at FOR UPDATE OF r`, [pseudonym, noticeId ?? null])).rows;
+      if (rows.length === 0) throw new NotFoundException({ error: "not_found", message: "no consent to withdraw" });
+      const withdrawnAt = new Date();
+      for (const row of rows) await this.finish(c, tenantId, row, withdrawnAt);
+      return { status: "withdrawn", consentIds: rows.map((r) => r.id), withdrawnAt: withdrawnAt.toISOString() };
     });
   }
 
