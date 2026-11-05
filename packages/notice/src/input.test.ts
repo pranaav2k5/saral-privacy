@@ -53,6 +53,22 @@ describe("validateNoticeInput", () => {
     );
   });
 
+  test("list errors are worded for a person filling in a form", () => {
+    const p = goodInput().purposes[0]!;
+    const message = (raw: unknown, field: string): string | undefined => {
+      const r = validateNoticeInput(raw);
+      return r.ok ? undefined : r.errors.find((e) => e.field === field)?.message;
+    };
+    expect(message({ ...goodInput(), purposes: [{ ...p, dataItems: [] }] }, "purposes[0].dataItems")).toBe("is required");
+    expect(message({ ...goodInput(), purposes: [{ ...p, dataItems: Array.from({ length: 51 }, () => "x") }] }, "purposes[0].dataItems")).toBe(
+      "must have at most 50 items",
+    );
+    expect(message({ ...goodInput(), thirdParties: Array.from({ length: 51 }, () => "x") }, "thirdParties")).toBe(
+      "must have at most 50 items",
+    );
+    expect(message({ ...goodInput(), purposes: [] }, "purposes")).toBe("is required");
+  });
+
   test("caps field lengths", () => {
     expect(errorsFor({ ...goodInput(), organisationName: "x".repeat(201) })).toContain("organisationName");
     const p = goodInput().purposes[0]!;

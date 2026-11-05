@@ -82,9 +82,8 @@ class Collector {
   }
 
   list(field: string, v: unknown, minLength: number, maxLength: number, maxItem: number): string[] | undefined {
-    if (!Array.isArray(v) || v.length < minLength || v.length > maxLength) {
-      return this.add(field, `must have ${minLength === 0 ? "at most" : `from ${String(minLength)} to`} ${String(maxLength)} items`);
-    }
+    if (!Array.isArray(v) || (v.length === 0 && minLength > 0)) return this.add(field, "is required");
+    if (v.length > maxLength) return this.add(field, `must have at most ${String(maxLength)} items`);
     const items = (v as unknown[]).map((x, i) => this.text(`${field}[${String(i)}]`, x, maxItem));
     return items.every((x) => x !== undefined) ? (items as string[]) : undefined;
   }
@@ -110,8 +109,10 @@ export function validateNoticeInput(raw: unknown): ValidationResult {
   if (typeof r.processesChildrenData !== "boolean") c.add("processesChildrenData", "must be true or false");
 
   const purposes: NoticePurpose[] = [];
-  if (!Array.isArray(r.purposes) || r.purposes.length < 1 || r.purposes.length > MAX.purposes) {
-    c.add("purposes", `must have from 1 to ${String(MAX.purposes)} purposes`);
+  if (!Array.isArray(r.purposes) || r.purposes.length < 1) {
+    c.add("purposes", "is required");
+  } else if (r.purposes.length > MAX.purposes) {
+    c.add("purposes", `must have at most ${String(MAX.purposes)} purposes`);
   } else {
     (r.purposes as unknown[]).forEach((p, i) => {
       const at = `purposes[${String(i)}]`;
