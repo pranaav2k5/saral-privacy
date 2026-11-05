@@ -18,6 +18,8 @@ export interface GrantInput {
   identifier: string;
   purposes: { key: string; granted: boolean }[];
   keyKind: ApiKeyKind;
+  /** A random key the caller chose for this request. Retrying with it returns the first result instead of recording twice. */
+  idempotencyKey?: string;
 }
 
 export interface PurposeDefinition {
@@ -72,7 +74,7 @@ export class ConsentService {
     return createHmac("sha256", this.keys.pseudonymKey()).update(JSON.stringify(["saral.principal", identifier, tenantId])).digest("hex");
   }
 
-  /** `reused` is true when an identical consent was already on record and is returned unchanged. */
+  /** `reused` is true when the request repeats an earlier one (same Idempotency-Key) and the first result is returned unchanged. */
   async grant(tenantId: string, input: GrantInput): Promise<{ consentId: string; receiptId: string; receipt: string; reused: boolean }> {
     const pseudonym = this.pseudonym(input.identifier, tenantId);
     const collectionMethod: CollectionMethod = input.keyKind === "publishable" ? "web_sdk" : "api";
@@ -94,19 +96,25 @@ export class ConsentService {
         throw new UnprocessableEntityException({ error: "nothing_granted", message: "at least one purpose must be granted; a consent that grants nothing is not recorded" });
       }
 
-      // Serialise grants for the tenant before looking for an identical consent, so two identical requests at the
+      // Serialise grants for the tenant before looking for an earlier request with the same key, so two retries at the
       // same moment cannot both miss each other and record twice.
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const principalId = await this.principal(c, tenantId, pseudonym);
-      const same = (await c.query<{ consent_id: string; receipt_id: string; jwt: string }>(
-        `SELECT r.id AS consent_id, rc.id AS receipt_id, rc.jwt FROM consent_records r
-         JOIN consent_receipts rc ON rc.tenant_id = r.tenant_id AND rc.consent_id = r.id
-         WHERE r.principal_id = $1 AND r.notice_id = $2 AND r.status = 'granted' AND r.purposes = $3::jsonb
-         ORDER BY r.granted_at DESC LIMIT 1`,
-        [principalId, notice.id, JSON.stringify(purposes)],
-      )).rows[0];
-      // The same person choosing the same thing again (a retry after a lost response, a second device) is not a new consent.
-      if (same !== undefined) return { consentId: same.consent_id, receiptId: same.receipt_id, receipt: same.jwt, reused: true };
+      // A retry carrying the same random key returns the first result. Nothing else is ever recognised: matching on the
+      // identifier alone would hand a stranger who knows it a stored receipt, and tell them the person is a customer.
+      if (input.idempotencyKey !== undefined) {
+        const prior = (await c.query<{ consent_id: string; status: string; principal_id: string; notice_id: string; purposes: { key: string; granted: boolean; retentionDays: number }[]; receipt_id: string; jwt: string }>(
+          `SELECT r.id AS consent_id, r.status, r.principal_id, r.notice_id, r.purposes, rc.id AS receipt_id, rc.jwt FROM consent_records r
+           JOIN consent_receipts rc ON rc.tenant_id = r.tenant_id AND rc.consent_id = r.id WHERE r.idempotency_key = $1`, [input.idempotencyKey])).rows[0];
+        if (prior !== undefined) {
+          const shape = (list: { key: string; granted: boolean; retentionDays: number }[]) => list.map((p) => `${p.key}:${String(p.granted)}:${String(p.retentionDays)}`).sort().join(",");
+          // A consent that has since been withdrawn or expired is never replayed as if it were current: use a new key.
+          if (prior.status !== "granted" || prior.principal_id !== principalId || prior.notice_id !== notice.id || shape(prior.purposes) !== shape(purposes)) {
+            throw new ConflictException({ error: "idempotency_key_reused", message: "this Idempotency-Key was already used for a different request, or its consent is no longer granted; use a new key" });
+          }
+          return { consentId: prior.consent_id, receiptId: prior.receipt_id, receipt: prior.jwt, reused: true };
+        }
+      }
       const consentId = randomUUID();
       const grantedAt = new Date();
       const fields: ConsentFields = {
@@ -115,9 +123,9 @@ export class ConsentService {
       };
       const payloadSha256 = sha256Hex(canonicalConsentRecord(fields));
       await c.query(
-        `INSERT INTO consent_records (id, tenant_id, principal_id, notice_id, notice_sha256, purposes, status, granted_at, collection_method)
-         VALUES ($1, $2, $3, $4, $5, $6, 'granted', $7, $8)`,
-        [consentId, tenantId, principalId, notice.id, notice.canonical_sha256, JSON.stringify(purposes), fields.grantedAt, collectionMethod],
+        `INSERT INTO consent_records (id, tenant_id, principal_id, notice_id, notice_sha256, purposes, status, granted_at, collection_method, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, 'granted', $7, $8, $9)`,
+        [consentId, tenantId, principalId, notice.id, notice.canonical_sha256, JSON.stringify(purposes), fields.grantedAt, collectionMethod, input.idempotencyKey ?? null],
       );
       await this.audit.append(c, tenantId, { actorType: "principal", actorId: principalId, action: "consent.granted", refTable: "consent_records", refId: consentId, payloadSha256 });
 
@@ -193,9 +201,9 @@ export class ConsentService {
   }
 
   /**
-   * Withdraws every granted consent the person has (optionally for one notice), found by identifier alone. A person who
-   * lost the consent id, cleared their browser, or consented on another device can still withdraw. Nothing found, or a
-   * wrong identifier, is the same 404.
+   * Withdraws every granted consent the person has (optionally for one notice), found by identifier alone. Only a tenant's
+   * server may call it (a secret key), after it has verified the person itself: the identifier alone proves nothing, and a
+   * publishable key is visible in a web page. Nothing found, or a wrong identifier, is the same 404.
    */
   async withdrawAll(tenantId: string, identifier: string, noticeId?: string): Promise<{ status: "withdrawn"; consentIds: string[]; withdrawnAt: string }> {
     const pseudonym = this.pseudonym(identifier, tenantId);

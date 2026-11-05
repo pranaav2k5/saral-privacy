@@ -62,7 +62,7 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 
 ### 6.2 Request path
 
-1. CORS (`configureApp`): reflects the origin, allows `Authorization` and `Content-Type`, never credentials.
+1. CORS (`configureApp`): reflects the origin, allows `Authorization`, `Content-Type` and `Idempotency-Key`, never credentials.
 2. `AuthGuard` (global): no `@Public()` or `@Scopes()` on the route gives 403. Otherwise parse `Authorization: Bearer <key>`, read the key row under the `key_lookup` policy, compare the HMAC of the secret in constant time, reject revoked keys and a kind mismatch (all with the same 401 body), check the origin list of a publishable key, check scopes (403). The result is `req.auth = { keyId, tenantId, kind, scopes }`.
 3. Controller validates the body with small helpers (`objectBody`, `uuidParam`, `normalizeIdentifier`, ...) and answers 400 with `{ error: "invalid_request", field, message }`.
 4. `Database.inScope({ tenantId })` (pool of 10, 5 second wait for a connection, 30 second statement limit, errors on idle connections are logged): `BEGIN`, `SET LOCAL ROLE saral_app`, `set_config('app.tenant_id', ..., true)`, the work, `COMMIT` or `ROLLBACK`. `Database.asWorker` does the same as `saral_worker` for the webhook worker.
@@ -73,7 +73,7 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 
 ### 6.4 Consent grant (`ConsentService.grant`, one transaction)
 
-Read tenant profile and notice; map the request's purposes (sorted by key) to the notice's definitions (unknown purpose is 422; retention comes from the definition); at least one purpose must be granted (422); principal id from the pseudonym `HMAC(pseudonymKey, JSON(["saral.principal", identifier, tenantId]))`; take the tenant lock, and if the same person already has an identical granted consent for the notice return it unchanged (200); otherwise insert the consent; append the audit entry with `payloadSha256 = SHA-256(canonicalConsentRecord)`; build and sign the receipt (an incomplete profile is 422 and rolls everything back); insert the receipt; enqueue webhooks. The receipt's `policyUrl` is `<PUBLIC_BASE_URL>/v1/notices/<id>` when that https base is configured (the notice never changes), otherwise the tenant's own page. Withdrawal is the same shape with a state change and a `consent.withdrawn` entry; `POST /v1/consents/withdraw` does it for every granted consent of a person found by identifier.
+Read tenant profile and notice; map the request's purposes (sorted by key) to the notice's definitions (unknown purpose is 422; retention comes from the definition); at least one purpose must be granted (422); principal id from the pseudonym `HMAC(pseudonymKey, JSON(["saral.principal", identifier, tenantId]))`; take the tenant lock, and if the request carries an `Idempotency-Key` that was already used for the same request (same person, notice and choices, consent still granted) return the first result (200; a different request or a no-longer-granted consent is 409); otherwise insert the consent (with the key); append the audit entry with `payloadSha256 = SHA-256(canonicalConsentRecord)`; build and sign the receipt (an incomplete profile is 422 and rolls everything back); insert the receipt; enqueue webhooks. The receipt's `policyUrl` is `<PUBLIC_BASE_URL>/v1/notices/<id>` when that https base is configured (the notice never changes), otherwise the tenant's own page. Withdrawal is the same shape with a state change and a `consent.withdrawn` entry; `POST /v1/consents/withdraw` (secret keys only) does it for every granted consent of a person found by identifier. Migration 0005 adds `consent_records.idempotency_key`, unique per tenant.
 
 ### 6.5 Audit append (`AuditService.append`)
 
@@ -83,7 +83,7 @@ Read tenant profile and notice; map the request's purposes (sorted by key) to th
 
 Registration (`tenant_admin`): URL rules and SSRF checks (`url-guard.ts`), at most 10 active endpoints per tenant counted under the tenant lock, an audit entry, and the secret `whsec_<base64url>` shown once. `DELETE /v1/webhook-endpoints/{id}` disables an endpoint (frees its slot; the worker closes events still waiting for it) and `POST .../rotate-secret` bumps `secret_version` and shows the new secret once; both are audit events. The secret is `HMAC(webhookKey, "<endpointId>:<secretVersion>")`; nothing is stored. Delivery: see HLD 4.4; every run first sweeps rows that can never be sent (15 attempts left by a crashed worker, disabled endpoints). Header `X-Saral-Signature: t=<unix>,v1=<HMAC-SHA256 of "<t>.<body>">`. Body `{ id, type, createdAt, data }` with ids and states only.
 
-## 7. Database (migrations 0001 to 0004)
+## 7. Database (migrations 0001 to 0005)
 
 | Table | Notes |
 |---|---|
@@ -148,4 +148,4 @@ Staff users per tenant with role `tenant_admin` or `dpo`. Password hashed with s
 
 ## 12. Tests
 
-`pnpm verify` runs lint, type checks, every test and every build. The API tests need PostgreSQL 16 (`pnpm db:up` and `DATABASE_URL`); they create throwaway databases, run as `saral_app`, and fail rather than skip without a database. Counts on this branch: schemas 47, audit-chain 67, receipts 76, notice 43, site 15, sdk-js 54, API 357. Mutation checks (a manual edit of the code that must make a test fail) are recorded in each pull request.
+`pnpm verify` runs lint, type checks, every test and every build. The API tests need PostgreSQL 16 (`pnpm db:up` and `DATABASE_URL`); they create throwaway databases, run as `saral_app`, and fail rather than skip without a database. Counts on this branch: schemas 47, audit-chain 67, receipts 76, notice 43, site 15, sdk-js 59, API 371. Mutation checks (a manual edit of the code that must make a test fail) are recorded in each pull request.

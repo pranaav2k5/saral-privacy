@@ -1,21 +1,31 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Res } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Headers, HttpCode, Param, Post, Res } from "@nestjs/common";
 import { Auth, Scopes, type AuthContext } from "../auth/access.js";
 import { bad, boolField, keyField, normalizeIdentifier, objectBody, uuidParam } from "../http/validate.js";
 import { ConsentService } from "./consent.service.js";
 
 const MAX_PURPOSES = 50;
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,128}$/;
 
 @Controller("v1/consents")
 export class ConsentsController {
   constructor(private readonly consents: ConsentService) {}
 
   /**
-   * Records a consent and returns the signed receipt (a Kantara KI-CR-v1.1.0 JWT): 201. If the same person already has an
-   * identical granted consent for the notice it is returned unchanged: 200, so a retry after a lost response is safe.
+   * Records a consent and returns the signed receipt (a Kantara KI-CR-v1.1.0 JWT): 201. A retry that carries the same
+   * `Idempotency-Key` header returns the first result unchanged (200), so a lost response is safe to retry. Without the
+   * header every request is a new consent.
    */
   @Post()
   @Scopes("sdk")
-  async grant(@Auth() auth: AuthContext, @Body() raw: unknown, @Res({ passthrough: true }) res: { status(code: number): unknown }) {
+  async grant(
+    @Auth() auth: AuthContext,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: { status(code: number): unknown },
+    @Headers("idempotency-key") idempotencyKey?: string,
+  ) {
+    if (idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(idempotencyKey)) {
+      throw bad("Idempotency-Key", "must be 8 to 128 letters, digits, dashes or underscores");
+    }
     const body = objectBody(raw);
     const noticeId = uuidParam(body.noticeId, "noticeId");
     const identifier = normalizeIdentifier(body.identifier);
@@ -30,16 +40,23 @@ export class ConsentsController {
       seen.add(key);
       return { key, granted: boolField(o.granted, `purposes[${String(i)}].granted`) };
     });
-    const { reused, ...result } = await this.consents.grant(auth.tenantId, { noticeId, identifier, purposes, keyKind: auth.kind });
+    const { reused, ...result } = await this.consents.grant(auth.tenantId, { noticeId, identifier, purposes, keyKind: auth.kind, ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) });
     if (reused) res.status(200);
     return { ...result, status: "granted" as const };
   }
 
-  /** Withdraws every granted consent of the person, found by identifier alone (optionally for one notice). */
+  /**
+   * Withdraws every granted consent of the person, found by identifier alone (optionally for one notice). Secret keys only:
+   * the identifier proves nothing about who is calling, and a publishable key is public. A tenant's server calls this
+   * after it has verified the person itself.
+   */
   @Post("withdraw")
   @HttpCode(200)
   @Scopes("sdk")
   withdrawAll(@Auth() auth: AuthContext, @Body() raw: unknown) {
+    if (auth.kind !== "secret") {
+      throw new ForbiddenException("this route needs a secret key: call it from your server after you have verified the person");
+    }
     const body = objectBody(raw);
     const identifier = normalizeIdentifier(body.identifier);
     const noticeId = body.noticeId === undefined ? undefined : uuidParam(body.noticeId, "noticeId");

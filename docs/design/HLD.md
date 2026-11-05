@@ -84,7 +84,7 @@ sequenceDiagram
   A->>D: sign receipt (RS256), insert consent_receipts
   A->>D: insert webhook_deliveries (outbox)
   A->>D: COMMIT
-  A-->>S: 201 { consentId, receiptId, receipt } (200 if an identical consent already existed)
+  A-->>S: 201 { consentId, receiptId, receipt } (200 for a retry with the same Idempotency-Key)
   S-->>P: dialog closes, "Privacy choices" button stays
 ```
 
@@ -92,7 +92,7 @@ Everything in the box is one transaction: a consent exists if and only if its au
 
 ### 4.2 Withdrawing
 
-`POST /v1/consents/withdraw` with the identifier alone (optionally a notice id) withdraws every granted consent the person has in the tenant, found by pseudonym, so it works on a device that never held the consent id. `POST /v1/consents/{id}/withdraw` with the identifier withdraws one consent by id. The pseudonym is recomputed and compared in constant time; a wrong identifier looks like an unknown consent (404). The consent moves from `granted` to `withdrawn` (a database trigger allows only that direction), a second audit entry is appended whose payload hash covers the new state, and a `consent.withdrawn` event is queued.
+`POST /v1/consents/{id}/withdraw` with the identifier withdraws one consent: both the id and the identifier must match. A tenant's server (a secret key) can call `POST /v1/consents/withdraw` with the identifier alone to withdraw every granted consent of a person after it has verified the person; a publishable key gets 403, because knowing someone's email address must not be enough. The pseudonym is recomputed and compared in constant time; a wrong identifier looks like an unknown consent (404). The consent moves from `granted` to `withdrawn` (a database trigger allows only that direction), a second audit entry is appended whose payload hash covers the new state, and a `consent.withdrawn` event is queued.
 
 ### 4.3 Verifying the audit log
 

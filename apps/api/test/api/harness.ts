@@ -53,6 +53,8 @@ export interface Tenant {
   id: string;
   noticeId: string;
   pk: string;
+  /** A secret key with the sdk scope: what a tenant's own server uses. */
+  server: string;
   admin: string;
   auditor: string;
   dpo: string;
@@ -127,6 +129,7 @@ export async function startApi(): Promise<Api> {
       id,
       noticeId,
       pk: await issue("publishable", ["sdk"], "web"),
+      server: await issue("secret", ["sdk"], "server"),
       admin: await issue("secret", ["tenant_admin"], "admin"),
       auditor: await issue("secret", ["auditor"], "auditor"),
       dpo: await issue("secret", ["dpo"], "dpo"),

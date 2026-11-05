@@ -84,6 +84,15 @@ paths:
         keyed HMAC and then discarded; it is never stored or logged.
       x-scopes: [sdk]
       security: [{ apiKey: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            A random, unguessable token (8 to 128 letters, digits, dashes or underscores) that the caller keeps for this
+            request. Without it every request is a new consent, and the API never recognises a person by identifier alone,
+            because that would hand a stored receipt to anyone who knows the identifier.
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,128}$' }
       requestBody:
         required: true
         content:
@@ -92,8 +101,8 @@ paths:
       responses:
         "200":
           description: >-
-            The same person already has an identical granted consent for this notice. It is returned unchanged and nothing is
-            recorded again, so a retry after a lost response is safe.
+            A retry: the request carries an `Idempotency-Key` that was already used for this same request, and the first result
+            is returned unchanged. Nothing is recorded again, so a lost response is safe to retry.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GrantResponse" }
@@ -109,16 +118,23 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The `Idempotency-Key` was already used for a different request, or its consent is no longer granted. Use a new key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "422": { $ref: "#/components/responses/Unprocessable" }
   /v1/consents/withdraw:
     post:
       tags: [Consents]
       operationId: withdrawAllConsents
-      summary: Withdraw every consent the person has, by identifier alone
+      summary: Withdraw every consent a person has, by identifier alone (secret keys only)
       description: >-
-        For a person who no longer has a consent id (cleared browser, another device). Withdraws every granted consent of
-        the person in the tenant, optionally only for one notice. Each withdrawal is audited and queued as an event. A wrong
-        identifier, another tenant's person, and nothing left to withdraw are all the same 404.
+        For a tenant's server, after it has verified the person itself (a signed-in user, a support request). The identifier
+        alone proves nothing about who is calling, and a publishable key is visible in a web page, so **a publishable key gets
+        403**. Withdraws every granted consent of the person in the tenant, optionally only for one notice. Each withdrawal is
+        audited and queued as an event. A wrong identifier, another tenant's person, and nothing left to withdraw are all the
+        same 404. The browser SDK withdraws by consent id and identifier instead (`/v1/consents/{id}/withdraw`).
       x-scopes: [sdk]
       security: [{ apiKey: [] }]
       requestBody:

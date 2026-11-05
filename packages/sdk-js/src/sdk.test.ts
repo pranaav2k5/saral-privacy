@@ -274,7 +274,7 @@ describe("a host page whose identifier callback fails", () => {
 
   test("withdrawing with a failing callback also says so, and can be retried", async () => {
     let known: string | undefined = "known@example.org";
-    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { status: "withdrawn", consentIds: ["c1"] }) : json(201, GRANTED)));
+    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { status: "withdrawn" }) : json(201, GRANTED)));
     const { sdk } = start({ fetch: f.fn, identifier: () => known });
     button("Accept all").click();
     await flush();
@@ -288,6 +288,76 @@ describe("a host page whose identifier callback fails", () => {
     button("Withdraw consent").click();
     await flush();
     expect(sdk.getConsent()).toBeNull();
+  });
+});
+
+describe("retrying a request safely", () => {
+  const header = (c: Call) => (c.init.headers as Record<string, string>)["Idempotency-Key"];
+
+  test("each request carries a random Idempotency-Key", async () => {
+    const { calls } = start({ identifier: "person@example.org" });
+    button("Accept all").click();
+    await flush();
+    expect(header(calls[0] as Call)).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  test("retrying the same request after a network failure reuses the key, so the server can return the first result", async () => {
+    let fail = true;
+    const f = fakeFetch(() => (fail ? (undefined as never) : json(201, GRANTED)));
+    const failing = (async (url: string, init: RequestInit) => {
+      if (fail) {
+        f.calls.push({ url, init, body: JSON.parse(String(init.body)) as Record<string, unknown> });
+        throw new TypeError("Failed to fetch");
+      }
+      return f.fn(url, init);
+    }) as unknown as typeof fetch;
+    start({ fetch: failing, identifier: "person@example.org" });
+    button("Accept all").click();
+    await flush();
+    fail = false;
+    button("Accept all").click();
+    await flush();
+    expect(f.calls).toHaveLength(2);
+    expect(header(f.calls[0] as Call)).toBeDefined();
+    expect(header(f.calls[1] as Call)).toBe(header(f.calls[0] as Call));
+  });
+
+  test("a changed choice gets a new key, and so does a request after a success", async () => {
+    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { status: "withdrawn" }) : json(201, GRANTED)));
+    const failing = (async (url: string, init: RequestInit) => {
+      const r = await f.fn(url, init);
+      return (f.calls.length === 1 ? ({ ok: false, status: 500, json: async () => ({}) } as unknown as Response) : r);
+    }) as unknown as typeof fetch;
+    const { sdk } = start({ fetch: failing, identifier: "person@example.org" });
+    toggle("analytics").click();
+    button("Accept selected").click();
+    await flush(); // 500: not saved
+    toggle("marketing").click(); // a different request now
+    button("Accept selected").click();
+    await flush();
+    expect(header(f.calls[1] as Call)).not.toBe(header(f.calls[0] as Call));
+    await sdk.withdraw();
+    sdk.open();
+    toggle("analytics").click();
+    toggle("marketing").click(); // exactly the choices of the request that succeeded before
+    button("Accept selected").click();
+    await flush();
+    expect(JSON.stringify(f.calls.at(-1)?.body)).toBe(JSON.stringify(f.calls[1]?.body));
+    expect(header(f.calls.at(-1) as Call)).not.toBe(header(f.calls[1] as Call)); // a new request, so a new key
+  });
+
+  test("without a secure random source no key is sent, and the request still works", async () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    try {
+      const { calls } = start({ identifier: "person@example.org" });
+      button("Accept all").click();
+      await flush();
+      expect(header(calls[0] as Call)).toBeUndefined();
+      expect(calls).toHaveLength(1);
+    } finally {
+      if (original) Object.defineProperty(globalThis, "crypto", original);
+    }
   });
 });
 
@@ -342,7 +412,7 @@ describe("what the browser keeps", () => {
 
 describe("withdrawing", () => {
   async function grantFirst(options: Partial<InitOptions> = {}) {
-    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { status: "withdrawn", consentIds: ["c1"], withdrawnAt: "2026-11-06T10:00:00.000Z" }) : json(201, GRANTED)));
+    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(200, { consentId: "c1", status: "withdrawn", withdrawnAt: "2026-11-06T10:00:00.000Z" }) : json(201, GRANTED)));
     const made = start({ fetch: f.fn, ...options });
     const input = identifierInput();
     if (input) type(input, "person@example.org"); // absent when the host page supplies the identifier
@@ -360,9 +430,9 @@ describe("withdrawing", () => {
     type(identifierInput() as HTMLInputElement, "person@example.org");
     button("Withdraw consent").click();
     await flush();
-    expect(calls.map((c) => c.url)).toEqual(["https://api.example.org/v1/consents", "https://api.example.org/v1/consents/withdraw"]);
-    // By identifier alone: it works on a device that never held the consent id, and withdraws every consent of the person.
-    expect(calls[1]?.body).toEqual({ identifier: "person@example.org", noticeId: NOTICE });
+    expect(calls.map((c) => c.url)).toEqual(["https://api.example.org/v1/consents", "https://api.example.org/v1/consents/c1/withdraw"]);
+    // Consent id and identifier together: knowing someone's email address is not enough to withdraw their consent.
+    expect(calls[1]?.body).toEqual({ identifier: "person@example.org" });
     expect(states.at(-1)).toBeNull();
     expect(localStorage.length).toBe(0);
     expect(document.body.textContent).toContain("withdrawn");
@@ -374,7 +444,7 @@ describe("withdrawing", () => {
     expect(identifierInput()).toBeNull();
     button("Withdraw consent").click();
     await flush();
-    expect(calls[1]?.body).toEqual({ identifier: "known@example.org", noticeId: NOTICE });
+    expect(calls[1]?.body).toEqual({ identifier: "known@example.org" });
   });
 
   test("a failed withdrawal keeps the consent on record, says so, and can be retried", async () => {
@@ -397,13 +467,23 @@ describe("withdrawing", () => {
     expect(sdk.getConsent()).toBeNull();
   });
 
-  test("withdrawal does not depend on a stored consent id: it works for a person whose browser holds only the decision", async () => {
-    const f = fakeFetch(() => json(200, { status: "withdrawn", consentIds: ["x", "y"] }));
-    const { sdk } = start({ fetch: f.fn, identifier: "known@example.org", openOnInit: false });
-    localStorage.setItem(`saral-privacy:${NOTICE}`, JSON.stringify({ decision: "granted", consentId: "c9", receiptId: "r9", purposes: { analytics: true }, at: "2026-11-06T09:00:00.000Z" }));
+  test("a withdrawal the server says is already done (409) counts as done: the person's wish is met", async () => {
+    const f = fakeFetch((c) => (c.url.endsWith("/withdraw") ? json(409, { error: "not_granted" }) : json(201, GRANTED)));
+    const { sdk, states } = start({ fetch: f.fn, identifier: "known@example.org" });
+    button("Accept all").click();
+    await flush();
     await sdk.withdraw();
-    expect(f.calls[0]?.url).toBe("https://api.example.org/v1/consents/withdraw");
     expect(sdk.getConsent()).toBeNull();
+    expect(states.at(-1)).toBeNull();
+    expect(localStorage.length).toBe(0);
+  });
+
+  test("without a stored consent id there is nothing to withdraw by id, so nothing is sent", async () => {
+    const f = fakeFetch(() => json(200, {}));
+    const { sdk } = start({ fetch: f.fn, identifier: "known@example.org", openOnInit: false });
+    localStorage.setItem(`saral-privacy:${NOTICE}`, JSON.stringify({ decision: "refused", purposes: { analytics: false }, at: "2026-11-06T09:00:00.000Z" }));
+    await sdk.withdraw();
+    expect(f.calls).toHaveLength(0);
   });
 
   test("sdk.withdraw() does the same without the dialog, for pages that build their own UI", async () => {

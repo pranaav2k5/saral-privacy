@@ -17,11 +17,12 @@ describe("CORS for the browser SDK", () => {
       .options("/v1/consents")
       .set("Origin", ORIGIN)
       .set("Access-Control-Request-Method", "POST")
-      .set("Access-Control-Request-Headers", "authorization,content-type");
+      .set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key");
     expect(res.status).toBe(204);
     expect(res.headers["access-control-allow-origin"]).toBe(ORIGIN);
     expect(res.headers["access-control-allow-methods"]).toMatch(/POST/);
     expect(res.headers["access-control-allow-headers"]?.toLowerCase()).toMatch(/authorization/);
+    expect(res.headers["access-control-allow-headers"]?.toLowerCase()).toMatch(/idempotency-key/);
     expect(res.headers["access-control-max-age"]).toBeDefined();
   });
 
