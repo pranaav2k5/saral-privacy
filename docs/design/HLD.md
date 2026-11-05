@@ -84,7 +84,7 @@ sequenceDiagram
   A->>D: sign receipt (RS256), insert consent_receipts
   A->>D: insert webhook_deliveries (outbox)
   A->>D: COMMIT
-  A-->>S: 201 { consentId, receiptId, receipt }
+  A-->>S: 201 { consentId, receiptId, receipt } (200 if an identical consent already existed)
   S-->>P: dialog closes, "Privacy choices" button stays
 ```
 
@@ -92,7 +92,7 @@ Everything in the box is one transaction: a consent exists if and only if its au
 
 ### 4.2 Withdrawing
 
-`POST /v1/consents/{id}/withdraw` with the same identifier. The pseudonym is recomputed and compared in constant time; a wrong identifier looks like an unknown consent (404). The consent moves from `granted` to `withdrawn` (a database trigger allows only that direction), a second audit entry is appended whose payload hash covers the new state, and a `consent.withdrawn` event is queued.
+`POST /v1/consents/withdraw` with the identifier alone (optionally a notice id) withdraws every granted consent the person has in the tenant, found by pseudonym, so it works on a device that never held the consent id. `POST /v1/consents/{id}/withdraw` with the identifier withdraws one consent by id. The pseudonym is recomputed and compared in constant time; a wrong identifier looks like an unknown consent (404). The consent moves from `granted` to `withdrawn` (a database trigger allows only that direction), a second audit entry is appended whose payload hash covers the new state, and a `consent.withdrawn` event is queued.
 
 ### 4.3 Verifying the audit log
 
@@ -120,11 +120,11 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 
 | Failure | Behaviour |
 |---|---|
-| Database down | Authenticated routes answer 5xx; `/healthz` stays up (it never touches dependencies); nothing is partially written because each request is one transaction. |
+| Database down or a connection dropped | Authenticated routes answer 5xx; `/healthz` stays up (it never touches dependencies); the pool logs dropped idle connections and reconnects (it does not crash the process); nothing is partially written because each request is one transaction. |
 | Key provider missing (production today) | Anything needing a key (API keys, receipts, the JWKS) answers 503. `/healthz` keeps working; the public notice route needs only the database. |
 | Receipt signing fails or the tenant profile is incomplete | The whole grant rolls back (422 for an incomplete profile); no consent without a receipt. |
 | Webhook endpoint down or slow | Retries with backoff; other endpoints and tenants are unaffected; a delivery that exhausts 15 attempts is marked `failed`. |
-| Worker crashes mid-delivery | The claim expires after 5 minutes and the row is sent again (at least once). |
+| Worker crashes mid-delivery | The claim expires after 5 minutes and the row is sent again (at least once). A row left at 15 attempts is closed as failed by a sweep, so it cannot block the claim for other tenants. |
 | Two requests append to one tenant's chain | A per-tenant advisory lock serialises them; a database trigger refuses a fork or a gap. |
 | Someone edits the audit table | Update, delete and truncate are refused for everyone, including the owner. An owner who disables the triggers is caught by `verify` and by the anchor. |
 | Clock goes backwards | Audit timestamps never decrease. |

@@ -28,6 +28,7 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 ## 3. Audit chain
 
 - `entryHash = HMAC-SHA256(key, prevHash || canonical)`, lowercase hex, key at least 32 bytes. `prevHash` of a tenant's first entry is 64 zeros.
+- A verify request is limited to 100,000 entries (`AuditService.maxEntries`) and answers 422 `too_large` beyond it; verify by UTC day instead.
 - `verifyChain(entries, resolveKey, { startPrevHash, startSeqNo, startHmacSchemaVersion })` checks each entry in order: same tenant, supported canonical version, contiguous `seqNo` (BigInt), previous hash, key known, key version not lower than before, fields valid, hash equal (constant time). The first failure is returned as `{ ok: false, failure, seqNo }` with `failure` one of `tenant_mismatch`, `unsupported_version`, `seq_gap`, `prev_mismatch`, `unknown_key`, `key_version_regression`, `invalid_fields`, `hash_mismatch`.
 - Merkle tree: RFC 6962. Leaf hash `SHA-256(0x00 || 32 bytes of the entry hash)`, node `SHA-256(0x01 || left || right)`, split at the largest power of two below n, empty tree `SHA-256("")`. Inclusion proofs follow RFC 9162. A proof binds a leaf to a root; the size only shapes the path, so the anchor's `count` pins the size.
 - Anchor: `{ version: 1, tenantId, date, count, firstSeqNo, lastSeqNo, headHash, merkleRoot }`. `anchorBody` is compact JSON in that key order plus a newline: the exact bytes for S3. `verifyAgainstAnchor` verifies the chain and then every anchor field, which catches truncation and key-holder rewrites.
@@ -35,6 +36,7 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 ## 4. Receipts
 
 - Claims are the KI-CR-v1.1.0 receipt in the field names of the specification's JSON schema (`policyUrl`, `piiControllerUrl`, array `purposeCategory`; the prose of the specification disagrees, see `docs/RESEARCH.md` section 6) plus `iat`. `piiPrincipalId` must be a pseudonymous UUID. `consentReceiptID` must be a UUID v4. `policyUrl` must be https without credentials. `thirdPartyName` is required when disclosure is true; `spiCat` must be non-empty when `sensitive` is true.
+- Extension claims `saralConsentId`, `saralNoticeId` and `saralNoticeSha256` (validated when present) say which consent and which exact notice text a receipt covers. `signReceipt` refuses a token the verifier would refuse (over 16 KiB).
 - `signReceipt` validates, then signs `base64url(header).base64url(payload)` with RS256. Header: `{ alg: "RS256", typ: "JWT", kid }`, where `kid` is the RFC 7638 thumbprint.
 - `verifyReceipt` order: token at most 16 KiB and three segments; canonical base64url; `alg` is exactly `RS256` (so `none`, HS256 confusion and others fail as `bad_alg`); the `kid` is in the key set; the key is RSA, `use` is `sig`, `alg` is `RS256` if set, modulus at least 2048 bits, exponent at least 65537; the signature verifies; the claims validate. Error codes: `malformed`, `bad_alg`, `unknown_kid`, `bad_key`, `weak_key`, `bad_signature`, `bad_claims`.
 - `buildJwks` copies only `kty`, `n`, `e`, `kid`, `alg`, `use` and throws on private members, duplicate ids or non-RSA keys.
@@ -56,13 +58,14 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 | `NODE_ENV` | `production` makes the key provider answer 503 instead of using development keys. |
 | `SARAL_DEV_MASTER_SECRET` | At least 32 characters. Development and test only; derives every key. Without it a random one is made per process. |
 | `SARAL_WEBHOOK_WORKER` | `on` starts the delivery poller in this process. |
+| `PUBLIC_BASE_URL` | Public https base URL of the API, used in receipts. |
 
 ### 6.2 Request path
 
 1. CORS (`configureApp`): reflects the origin, allows `Authorization` and `Content-Type`, never credentials.
 2. `AuthGuard` (global): no `@Public()` or `@Scopes()` on the route gives 403. Otherwise parse `Authorization: Bearer <key>`, read the key row under the `key_lookup` policy, compare the HMAC of the secret in constant time, reject revoked keys and a kind mismatch (all with the same 401 body), check the origin list of a publishable key, check scopes (403). The result is `req.auth = { keyId, tenantId, kind, scopes }`.
 3. Controller validates the body with small helpers (`objectBody`, `uuidParam`, `normalizeIdentifier`, ...) and answers 400 with `{ error: "invalid_request", field, message }`.
-4. `Database.inScope({ tenantId })`: `BEGIN`, `SET LOCAL ROLE saral_app`, `set_config('app.tenant_id', ..., true)`, the work, `COMMIT` or `ROLLBACK`. `Database.asWorker` does the same as `saral_worker` for the webhook worker.
+4. `Database.inScope({ tenantId })` (pool of 10, 5 second wait for a connection, 30 second statement limit, errors on idle connections are logged): `BEGIN`, `SET LOCAL ROLE saral_app`, `set_config('app.tenant_id', ..., true)`, the work, `COMMIT` or `ROLLBACK`. `Database.asWorker` does the same as `saral_worker` for the webhook worker.
 
 ### 6.3 API keys
 
@@ -70,7 +73,7 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 
 ### 6.4 Consent grant (`ConsentService.grant`, one transaction)
 
-Read tenant profile and notice; map the request's purposes to the notice's definitions (unknown purpose is 422; retention comes from the definition); at least one purpose must be granted (422); principal id from the pseudonym `HMAC(pseudonymKey, JSON(["saral.principal", identifier, tenantId]))`; insert the consent; append the audit entry with `payloadSha256 = SHA-256(canonicalConsentRecord)`; build and sign the receipt (an incomplete profile is 422 and rolls everything back); insert the receipt; enqueue webhooks. Withdrawal is the same shape with a state change and a `consent.withdrawn` entry.
+Read tenant profile and notice; map the request's purposes (sorted by key) to the notice's definitions (unknown purpose is 422; retention comes from the definition); at least one purpose must be granted (422); principal id from the pseudonym `HMAC(pseudonymKey, JSON(["saral.principal", identifier, tenantId]))`; take the tenant lock, and if the same person already has an identical granted consent for the notice return it unchanged (200); otherwise insert the consent; append the audit entry with `payloadSha256 = SHA-256(canonicalConsentRecord)`; build and sign the receipt (an incomplete profile is 422 and rolls everything back); insert the receipt; enqueue webhooks. The receipt's `policyUrl` is `<PUBLIC_BASE_URL>/v1/notices/<id>` when that https base is configured (the notice never changes), otherwise the tenant's own page. Withdrawal is the same shape with a state change and a `consent.withdrawn` entry; `POST /v1/consents/withdraw` does it for every granted consent of a person found by identifier.
 
 ### 6.5 Audit append (`AuditService.append`)
 
@@ -78,7 +81,7 @@ Read tenant profile and notice; map the request's purposes to the notice's defin
 
 ### 6.6 Webhooks
 
-Registration (`tenant_admin`): URL rules and SSRF checks (`url-guard.ts`), at most 10 active endpoints per tenant counted under the tenant lock, an audit entry, and the secret `whsec_<base64url>` shown once. The secret is `HMAC(webhookKey, "<endpointId>:<secretVersion>")`; nothing is stored. Delivery: see HLD 4.4. Header `X-Saral-Signature: t=<unix>,v1=<HMAC-SHA256 of "<t>.<body>">`. Body `{ id, type, createdAt, data }` with ids and states only.
+Registration (`tenant_admin`): URL rules and SSRF checks (`url-guard.ts`), at most 10 active endpoints per tenant counted under the tenant lock, an audit entry, and the secret `whsec_<base64url>` shown once. `DELETE /v1/webhook-endpoints/{id}` disables an endpoint (frees its slot; the worker closes events still waiting for it) and `POST .../rotate-secret` bumps `secret_version` and shows the new secret once; both are audit events. The secret is `HMAC(webhookKey, "<endpointId>:<secretVersion>")`; nothing is stored. Delivery: see HLD 4.4; every run first sweeps rows that can never be sent (15 attempts left by a crashed worker, disabled endpoints). Header `X-Saral-Signature: t=<unix>,v1=<HMAC-SHA256 of "<t>.<body>">`. Body `{ id, type, createdAt, data }` with ids and states only.
 
 ## 7. Database (migrations 0001 to 0004)
 
@@ -145,4 +148,4 @@ Staff users per tenant with role `tenant_admin` or `dpo`. Password hashed with s
 
 ## 12. Tests
 
-`pnpm verify` runs lint, type checks, every test and every build. The API tests need PostgreSQL 16 (`pnpm db:up` and `DATABASE_URL`); they create throwaway databases, run as `saral_app`, and fail rather than skip without a database. Counts on this branch: schemas 47, audit-chain 67, receipts 69, notice 43, site 15, sdk-js 48, API 336. Mutation checks (a manual edit of the code that must make a test fail) are recorded in each pull request.
+`pnpm verify` runs lint, type checks, every test and every build. The API tests need PostgreSQL 16 (`pnpm db:up` and `DATABASE_URL`); they create throwaway databases, run as `saral_app`, and fail rather than skip without a database. Counts on this branch: schemas 47, audit-chain 67, receipts 76, notice 43, site 15, sdk-js 54, API 357. Mutation checks (a manual edit of the code that must make a test fail) are recorded in each pull request.

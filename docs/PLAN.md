@@ -460,7 +460,7 @@ This section records what exists in the repository against the scope in section 
 | 3. Signed consent receipts | Built | `packages/receipts`, API routes, `/.well-known/jwks.json` | KMS-held signing key (a development key provider exists). Public verifier page. |
 | 4. Tamper-evident audit log | Built (library, database, verify endpoint) | `packages/audit-chain`, migration 0002, `/v1/audit/*` | Nightly anchor job and the S3 Object Lock write; the standalone verifier command-line tool; the performance benchmark planned for week 8. |
 | 5. Data-principal rights (DSR) | Designed only | `docs/design/LLD.md` section 9 | Everything. |
-| 6. Webhooks | Built | `apps/api/src/webhooks` | Delivery log and manual redelivery routes, secret rotation route, auto-disable of failing endpoints. |
+| 6. Webhooks | Built | `apps/api/src/webhooks` | Delivery log and manual redelivery routes, auto-disable of failing endpoints. (Disable and rotate routes exist.) |
 | 7. Multi-tenancy and auth | Partly | Row-level security and API keys: built. Staff login with MFA: designed only. | Staff login, MFA, sessions, the `principal` scope and wallet login. |
 
 | P1 item | Status |

@@ -31,13 +31,17 @@ Browser or server client to API; API to PostgreSQL (as `saral_app`, threat model
 | Spoofing | Someone withdraws another person's consent by knowing the consent id. | Withdrawal needs the person's identifier, checked in constant time. A wrong identifier looks like an unknown consent. | `consent.e2e.test.ts`: withdrawal |
 | Spoofing | **Someone forges consents for other people's phone numbers**, because a publishable key is visible in a web page and the API cannot tell who typed the number. | Partly mitigated: origin restriction for publishable keys, a receipt and audit entry that record the collection method (`web_sdk`), and consents bound to the notice hash. Not mitigated: nothing proves the person controls the identifier. | `auth.e2e.test.ts`: origin; **open risk** |
 | Denial of service | Request floods, or very large bodies. | The default body size limit applies. **No rate limiting yet.** | **open item** |
+| Denial of service | One `verify` request loads a whole chain into memory, or a connection waits forever. | A request is limited to 100,000 entries (422 with advice to verify by day); the pool waits at most 5 seconds for a connection and no query runs over 30 seconds; the pool logs dropped idle connections instead of crashing. | `audit.e2e.test.ts`, `database.test.ts` |
+| Repudiation | A person holding only a receipt cannot tell what it covers or withdraw it (the consent id lived only in the browser). | The receipt points to the immutable public notice and names the consent, the notice id and the notice text's hash; `POST /v1/consents/withdraw` withdraws by identifier alone. | `consent.e2e.test.ts` |
+| Tampering | A retry after a lost response records the same consent twice, leaving an orphan that can never be withdrawn. | An identical granted consent for the same person and notice is returned unchanged (200), under a per-tenant lock so simultaneous retries cannot both record. | `consent.e2e.test.ts`: granting the same thing twice |
 | Information disclosure | A misconfigured production boots with development keys. | The dev key provider refuses `NODE_ENV=production`; production boots with a provider that answers 503 for anything needing a key. | `key-provider.test.ts`, image smoke test |
 | Tampering | The audit log is edited behind the API's back. | `/v1/audit/verify` recomputes the chain and reports the failing `seqNo`. | `audit.e2e.test.ts` |
 
 ## Residual risks
 
 - **Consent forgery through publishable keys.** Fixing it needs proof that the person controls the identifier (an OTP or a signed claim from the tenant's server). Until then, tenants who need high assurance should record consents from their server with a secret key after verifying the person, and receipts show `api` as the collection method. This must be in the pilot agreement and the documentation.
-- No rate limits, no key rotation endpoint, no key listing for tenants yet.
+- No rate limits, no API key rotation or listing routes for tenants yet.
+- An identical consent is returned as it is, which also means a second device gets the first device's receipt. A different choice by the same person is a separate consent; `POST /v1/consents/withdraw` withdraws all of a person's granted consents at once.
 - The audit verification endpoint reads a whole tenant chain or one UTC day into memory. Benchmark in week 8 as planned and shard if needed.
 - Day boundaries for anchors are UTC days. The nightly job in the plan runs at 02:00 IST; the job and the day definition must be reconciled when the job is built.
 - The pseudonym key and audit key live in a development provider. KMS adapters are not built.
