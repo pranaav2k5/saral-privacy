@@ -3,3 +3,5 @@ export const CANONICAL_SCHEMA_VERSION = 1 as const;
 
 /** Kantara consent receipt specification version carried in every receipt. */
 export const RECEIPT_SPEC_VERSION = "KI-CR-v1.1.0" as const;
+
+export * from "./canonical";
