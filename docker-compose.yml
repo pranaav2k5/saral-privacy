@@ -1,0 +1,20 @@
+# Local development services. Dev-only credentials; nothing here is a secret.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: saral
+      POSTGRES_PASSWORD: saral_dev
+      POSTGRES_DB: saral
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - saral_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saral -d saral"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  saral_pgdata:

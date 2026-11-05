@@ -1,0 +1,14 @@
+{
+  "name": "@saral/schemas",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Versioned schema constants shared by the API, SDK, and verifier",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest",
+    "build": "tsc -p tsconfig.build.json"
+  }
+}

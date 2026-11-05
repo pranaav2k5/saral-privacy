@@ -1,6 +1,6 @@
 # Saral Privacy: Master Plan
 
-Status: Draft v0.1, written 2026-11-05. Not yet approved by the owner.
+Status: Draft v0.1, written 2026-11-05. Approved by the owner on 2026-11-05; the open decisions in section 13 are still to be answered. The repository scaffold is built (see section 14 and ADR-0001).
 Owner: pranaav2k5.
 
 This plan merges two input documents and re-bases them on today's date:
@@ -73,7 +73,7 @@ Indian businesses that process digital personal data must comply with the DPDP A
 | D1 | Build the B2B DPDP SaaS first. The consumer layer is a free "DPDP Wallet" for trust, not a business. | Both | Both documents reject the data-wallet business. B2B demand is statutory. |
 | D2 | **Do not register as a Consent Manager now.** Revisit at month 12 against the gate below. | Feasibility Study (overrides Strategy Report's "apply Q4 2026") | Needs ₹2 crore net worth, Indian incorporation, DPB approval, and conflict-of-interest separation from Data Fiduciaries. Our B2B revenue from Data Fiduciaries is itself a conflict if we register. The DPB interoperability spec is not out. |
 | D3 | Beachhead: non-BFSI SMBs with 50 to 500 employees (edtech, healthtech, D2C, SaaS, HR-tech). | Both | BFSI is Privy and Perfios territory and needs certifications we lack. |
-| D4 | Stack: Next.js 14 + TypeScript for UIs; NestJS for the control plane; FastAPI only for the ML service; PostgreSQL 16 with row-level security; AWS ap-south-1; ECS Fargate; Terraform; no Kubernetes. | Feasibility Study | Avoids the three-backend sprawl in the Strategy Report. |
+| D4 | Stack: Next.js (current supported major; 14 is end of life, see ADR-0001) + TypeScript for UIs; NestJS for the control plane; FastAPI only for the ML service; PostgreSQL 16 with row-level security; AWS ap-south-1; ECS Fargate; Terraform; no Kubernetes. | Feasibility Study | Avoids the three-backend sprawl in the Strategy Report. |
 | D5 | Marketing site and free notice tool may run on Vercel or Cloudflare, because they hold no personal data. Anything that holds personal data runs in AWS ap-south-1. | Strategy Report, narrowed (my call) | Keeps the data-residency story clean for customers. |
 | D6 | Mobile SDK is not in the MVP. Build it after GA. Choose React Native or Kotlin Multiplatform based on the first design partners' app stacks. | Mine | The two documents disagree (React Native vs KMM). A mobile SDK is a large cost for a small team. Most pilots start on web. |
 | D7 | Two-track delivery. Track A is the free Notice Generator (English and Hindi) live in week 4 and put in front of 100 founders by week 6. Track B is the platform core. | Mine (merges both) | Strategy Report says the free tool is the most important MVP item. Feasibility Study sequences the audit spine first. We need both because the deadline is fixed. |
@@ -106,7 +106,7 @@ If not, stay a SaaS vendor to Data Fiduciaries and partner with one of the regis
 ### P0: required for the first pilot (end of week 10)
 
 1. **Privacy Notice Generator.** Free public version in English and Hindi (week 4). In-product version with tenant-specific data, versioning, SHA-256 canonical hash, and public notice URL.
-2. **Consent capture.** Web JS SDK (UMD, 25 kB gzipped or less) with granular per-purpose toggles, defaults off for non-essential purposes, and a withdrawal path as easy as giving consent.
+2. **Consent capture.** Web JS SDK (IIFE build for script tags plus ESM and CJS, 25 kB gzipped or less for the IIFE file) with granular per-purpose toggles, defaults off for non-essential purposes, and a withdrawal path as easy as giving consent.
 3. **Signed consent receipts.** Kantara KI-CR-v1.1.0 JSON as an RS256 JWT, signed with a KMS-managed key. Public JWKS at `/.well-known/jwks.json`. Conform to the ISO/IEC TS 27560 minimal record where possible.
 4. **Tamper-evident audit log.** HMAC chain, nightly Merkle anchor, `/v1/audit/verify`.
 5. **Data-principal rights (DSR).** Access, correction, erasure, nomination, grievance. State machine, SLA timers, DPO review screen.
@@ -419,7 +419,7 @@ Funding path (Strategy Report): pre-seed ₹1 to 3 crore from investors such as 
 
 ## 14. Proposed repository layout
 
-Nothing below is built yet. It is the layout to scaffold after this plan is approved.
+The scaffold below is built (branch `chore/scaffold`). `packages/verifier/` is a README only until the audit-log plan. Deviations from the original draft are recorded in `docs/adr/0001-toolchain-and-versions.md`.
 
 ```
 saral-privacy/
@@ -437,7 +437,7 @@ saral-privacy/
     api/               NestJS control plane
     ml/                FastAPI service
   packages/
-    sdk-js/            consent SDK (UMD, 25 kB gzipped budget)
+    sdk-js/            consent SDK (IIFE + ESM + CJS, 25 kB gzipped budget on the IIFE)
     schemas/           canonical string and receipt schemas (versioned)
     verifier/          open-source audit verifier
   infra/
@@ -445,4 +445,4 @@ saral-privacy/
   .github/workflows/   CI
 ```
 
-Branching: trunk-based on `main`, short-lived feature branches, pull-request review required, secret scanning and dependency scanning on from the first commit.
+Branching: trunk-based on `main`, short-lived feature branches, pull-request review expected (branch protection is not configured; see CONTRIBUTING.md), secret scanning and dependency scanning on from the first commit.

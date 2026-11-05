@@ -2,7 +2,7 @@
 
 A DPDP-native consent and privacy operations platform for Indian small and mid-sized businesses. Notice generation in Indian languages, consent capture with signed receipts, data-principal rights handling, records of processing, breach workflow, and a tamper-evident audit log.
 
-Status: **planning**. No product code yet. The plan is a draft awaiting the owner's approval.
+Status: **scaffolded**. The plan is approved (its open decisions are still to be answered) and the repository skeleton builds and passes its smoke tests. No product features yet.
 
 Key date: the Digital Personal Data Protection Act's full compliance deadline is **13 May 2027**.
 
@@ -10,6 +10,27 @@ Key date: the Digital Personal Data Protection Act's full compliance deadline is
 
 1. [`docs/PLAN.md`](docs/PLAN.md): the master plan. Scope, reconciled decisions, architecture, 16-week calendar, go-to-market, risks, roadmap, open decisions.
 2. [`docs/RESEARCH.md`](docs/RESEARCH.md): what was verified, what was found wrong in the source documents, and what is still unverified.
+
+## Getting started
+
+Prerequisites: Node 24 LTS (22.12 or newer works), pnpm 11, Python 3.13 with uv, Terraform 1.10 or newer, Docker.
+
+```
+pnpm install
+pnpm verify          # lint, typecheck, test, build for every TypeScript workspace
+pnpm db:up           # local PostgreSQL 16 on 127.0.0.1:5432 (pnpm db:down to stop)
+cd apps/ml && uv sync && uv run pytest
+```
+
+Local ports: web 3000, wallet 3001, site 3002, api 4000, ml 8000, postgres 5432. See `CONTRIBUTING.md` for the workflow and Definition of Done.
+
+## Layout
+
+- `apps/api`: NestJS control plane. `apps/ml`: FastAPI ML service.
+- `apps/web`, `apps/wallet`, `apps/site`: Next.js dashboard, consumer wallet, and marketing site with the free notice tool.
+- `packages/schemas`: versioned schema constants. `packages/sdk-js`: browser consent SDK (25 kB gzipped budget). `packages/verifier`: audit verifier, README only for now.
+- `infra/terraform`: AWS modules and environment stacks.
+- `docs/`: plan, research log, ADRs, threat models, compliance matrix.
 
 ## Source material
 
