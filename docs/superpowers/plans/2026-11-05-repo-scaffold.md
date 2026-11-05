@@ -231,7 +231,7 @@ Every TypeScript workspace exposes these scripts so root `pnpm -r` commands work
 - Workflow `ci` runs on `pull_request` and on `push` to `main`, with top-level `permissions: contents: read` and `concurrency` cancelling superseded runs. Jobs:
   - `node`: matrix Node `22` and `24`. Steps: checkout, `pnpm/action-setup`, `actions/setup-node` with pnpm cache, `pnpm install --frozen-lockfile`, `pnpm verify`, `pnpm --filter @saral/sdk-js size`.
   - `python`: `astral-sh/setup-uv`, in `apps/ml`: `uv sync --locked`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run pytest`.
-  - `terraform`: `hashicorp/setup-terraform`, `terraform fmt -check -recursive infra/terraform`, module `terraform test`, `init -backend=false` plus `validate` for each env, then `bridgecrewio/checkov-action` on `infra/terraform`.
+  - `terraform`: `hashicorp/setup-terraform`, `terraform fmt -check -recursive infra/terraform`, module `terraform test`, `init -backend=false` plus `validate` for each env, then Checkov (pinned `checkov==3.4.3` through pipx, because the checkov-action bundles an obsolete Checkov) on `infra/terraform`.
   - `security`: `gitleaks/gitleaks-action` (full history) and `aquasecurity/trivy-action` in `fs` mode, severity `HIGH,CRITICAL`, `exit-code: 1`.
 - Every third-party action is pinned to a full commit SHA with the tag in a trailing comment.
 

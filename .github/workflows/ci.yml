@@ -64,14 +64,15 @@ jobs:
             terraform -chdir=infra/terraform/envs/$env init -backend=false
             terraform -chdir=infra/terraform/envs/$env validate
           done
-      - uses: bridgecrewio/checkov-action@99bb2caf247dfd9f03cf984373bc6043d4e32ebf # v12.1347.0
-        with:
-          directory: infra/terraform
-          framework: terraform
-          quiet: true
+      # The checkov-action bundles Checkov 2.0.930, which does not understand split aws_s3_bucket_* resources.
+      - name: Checkov
+        run: pipx run --spec checkov==3.4.3 checkov -d infra/terraform --framework terraform --quiet --compact
 
   security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # gitleaks-action lists the pull request's commits
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
