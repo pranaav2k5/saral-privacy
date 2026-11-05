@@ -5,6 +5,13 @@
 -- every transaction. saral_app is not a superuser, owns nothing, and does not bypass row-level security.
 -- (Superusers and BYPASSRLS roles skip every policy below, which is why tests must run as saral_app.)
 
+-- Temporary tables could shadow real tables for code that does not pin its search_path. Nothing here needs them.
+DO $$
+BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+END
+$$;
+
 -- Roles are shared by every database in the cluster. If another migration creates the role at the same moment,
 -- the error is ignored as long as the role exists afterwards.
 DO $$
@@ -25,6 +32,7 @@ $$;
 -- A value that is not a UUID raises an error: the query fails closed instead of returning rows.
 CREATE FUNCTION current_tenant_id() RETURNS uuid
   LANGUAGE sql STABLE
+  SET search_path = pg_catalog, public, pg_temp
   AS $$ SELECT nullif(current_setting('app.tenant_id', true), '')::uuid $$;
 
 CREATE TABLE tenants (
@@ -54,11 +62,14 @@ CREATE TABLE privacy_notices (
   language text NOT NULL CHECK (language ~ '^[a-z]{2}$'),
   canonical_text text NOT NULL,
   canonical_sha256 char(64) NOT NULL CHECK (canonical_sha256 ~ '^[0-9a-f]{64}$'),
+  -- The hash is of the stored text exactly, so callers store the canonical text (packages/notice canonicalNoticeText).
+  CHECK (canonical_sha256::text = encode(sha256(convert_to(canonical_text, 'UTF8')), 'hex')),
   review_status text NOT NULL DEFAULT 'pending-human-review'
     CHECK (review_status IN ('pending-human-review', 'reviewed')),
   published_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (id),
   UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, id, canonical_sha256),
   UNIQUE (tenant_id, version, language)
 );
 
@@ -78,8 +89,34 @@ CREATE TABLE consent_records (
   UNIQUE (tenant_id, id),
   CHECK ((status = 'withdrawn') = (withdrawn_at IS NOT NULL)),
   FOREIGN KEY (tenant_id, principal_id) REFERENCES tenant_principals (tenant_id, id),
-  FOREIGN KEY (tenant_id, notice_id) REFERENCES privacy_notices (tenant_id, id)
+  -- Binds the consent to the exact notice text: the stored hash must be that notice's hash.
+  FOREIGN KEY (tenant_id, notice_id, notice_sha256) REFERENCES privacy_notices (tenant_id, id, canonical_sha256)
 );
+
+-- A consent only ever finishes: granted to withdrawn or expired. A finished consent never changes, and nothing but
+-- status and withdrawn_at changes on the way. A new consent is a new row. Applies to the owner too.
+CREATE FUNCTION consent_records_guard() RETURNS trigger
+  LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
+  AS $$
+BEGIN
+  IF OLD.status <> 'granted' THEN
+    RAISE EXCEPTION 'consent % is % and cannot change; record a new consent instead', OLD.id, OLD.status;
+  END IF;
+  IF NEW.status NOT IN ('withdrawn', 'expired') THEN
+    RAISE EXCEPTION 'a consent can only move from granted to withdrawn or expired';
+  END IF;
+  IF (NEW.id, NEW.tenant_id, NEW.principal_id, NEW.notice_id, NEW.notice_sha256, NEW.purposes, NEW.granted_at, NEW.collection_method)
+     IS DISTINCT FROM
+     (OLD.id, OLD.tenant_id, OLD.principal_id, OLD.notice_id, OLD.notice_sha256, OLD.purposes, OLD.granted_at, OLD.collection_method) THEN
+    RAISE EXCEPTION 'only status and withdrawn_at may change on a consent';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER consent_records_guard BEFORE UPDATE ON consent_records
+  FOR EACH ROW EXECUTE FUNCTION consent_records_guard();
 
 CREATE INDEX consent_records_principal ON consent_records (tenant_id, principal_id);
 

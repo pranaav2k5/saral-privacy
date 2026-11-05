@@ -1,4 +1,4 @@
-import { TENANT_A, TENANT_B, asApp, connect, createTestDb, seed, uid, HEX, type TestDb } from "./helpers.js";
+import { NOTICE_TEXT, TENANT_A, TENANT_B, HEX, asApp, connect, createTestDb, seed, sha256, uid, type TestDb } from "./helpers.js";
 
 const TENANT_TABLES = ["tenant_principals", "privacy_notices", "consent_records", "consent_audit_log", "consent_receipts"];
 
@@ -139,7 +139,7 @@ describe("references cannot cross tenants", () => {
       db.owner.query(
         `INSERT INTO consent_records (id, tenant_id, principal_id, notice_id, notice_sha256, purposes, status, granted_at, collection_method)
          VALUES ($1, $2, $3, $4, $5, '[]', 'granted', now(), 'web_sdk')`,
-        [uid("a", 20), TENANT_A, uid("a", 1), uid("b", 2), HEX("3")],
+        [uid("a", 20), TENANT_A, uid("a", 1), uid("b", 2), sha256(NOTICE_TEXT)],
       ),
     ).rejects.toThrow(/foreign key/);
   });

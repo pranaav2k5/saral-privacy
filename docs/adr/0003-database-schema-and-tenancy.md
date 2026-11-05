@@ -18,6 +18,10 @@ Date: 2026-11-06
   - Composite foreign keys `(tenant_id, id)` keep references inside one tenant.
   - `consent_audit_log` is keyed `(tenant_id, seq_no)`, not by a global sequence; `payload_sha256` is added (ADR 0002); timestamps must have millisecond precision; the database enforces the chain link (next `seq_no`, previous hash).
   - The application role gets only the privileges it needs: no update or delete on notices, receipts or audit entries, and `UPDATE` on two columns of `consent_records`.
+  - A consent only finishes (granted to withdrawn or expired) and a finished one never changes; a trigger enforces it, also for the owner.
+  - A consent's `notice_sha256` is a foreign key to the notice's own hash, and the notice's hash is checked against its stored text. Callers store the canonical text.
+  - Functions pin their `search_path` and `TEMPORARY` is revoked from `PUBLIC`.
+  - These three were added after an automated security review of the first version of the migrations. The migrations had not been applied anywhere, so they were edited in place; from the first applied version on, migrations are append-only (the runner refuses edits).
 - Tests create a throwaway database per test file and run as `saral_app`. Without `DATABASE_URL` they fail, they never skip.
 
 ## Consequences

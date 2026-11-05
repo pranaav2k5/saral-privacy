@@ -30,19 +30,21 @@ CREATE INDEX consent_audit_log_ts ON consent_audit_log (tenant_id, ts);
 -- Serialises appends for one tenant for the rest of the transaction. Call it before reading the head of the chain.
 CREATE FUNCTION audit_append_lock(p_tenant uuid) RETURNS void
   LANGUAGE sql
+  SET search_path = pg_catalog, public, pg_temp
   AS $$ SELECT pg_advisory_xact_lock(hashtextextended('saral.audit:' || p_tenant::text, 0)) $$;
 
 -- Every new entry must continue its tenant's chain: seq 1 with the genesis hash first, then the next seq with
 -- the previous entry's hash.
 CREATE FUNCTION audit_chain_link() RETURNS trigger
   LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
   AS $$
 DECLARE
   last_seq bigint;
   last_hash char(64);
 BEGIN
   SELECT seq_no, entry_hash INTO last_seq, last_hash
-    FROM consent_audit_log WHERE tenant_id = NEW.tenant_id ORDER BY seq_no DESC LIMIT 1;
+    FROM public.consent_audit_log WHERE tenant_id = NEW.tenant_id ORDER BY seq_no DESC LIMIT 1;
   IF NOT FOUND THEN
     IF NEW.seq_no <> 1 OR NEW.prev_hash <> repeat('0', 64) THEN
       RAISE EXCEPTION 'first audit entry for a tenant must have seq_no 1 and the genesis prev_hash';
@@ -59,6 +61,7 @@ CREATE TRIGGER audit_chain_link BEFORE INSERT ON consent_audit_log
 
 CREATE FUNCTION audit_append_only() RETURNS trigger
   LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp
   AS $$
 BEGIN
   RAISE EXCEPTION 'consent_audit_log is append-only';

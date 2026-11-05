@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import pg from "pg";
 import { migrate } from "../../src/db/migrate.js";
 
@@ -6,6 +6,8 @@ export const TENANT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 export const TENANT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 export const GENESIS = "0".repeat(64);
 export const HEX = (c: string): string => c.repeat(64);
+export const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
+export const NOTICE_TEXT = "notice text";
 
 /** Deterministic UUID for tests: `uid("c", 7)` is the 7th id in the "c" family. */
 export const uid = (family: string, n: number): string =>
@@ -97,13 +99,13 @@ export async function seed(owner: pg.Client): Promise<void> {
     );
     await owner.query(
       `INSERT INTO privacy_notices (id, tenant_id, version, language, canonical_text, canonical_sha256)
-       VALUES ($1, $2, 1, 'en', 'notice text', $3)`,
-      [uid(family, 2), tenant, HEX(family === "a" ? "3" : "4")],
+       VALUES ($1, $2, 1, 'en', $3, $4)`,
+      [uid(family, 2), tenant, NOTICE_TEXT, sha256(NOTICE_TEXT)],
     );
     await owner.query(
       `INSERT INTO consent_records (id, tenant_id, principal_id, notice_id, notice_sha256, purposes, status, granted_at, collection_method)
        VALUES ($1, $2, $3, $4, $5, '[{"key":"analytics","granted":true,"retention_days":365}]', 'granted', now(), 'web_sdk')`,
-      [uid(family, 3), tenant, uid(family, 1), uid(family, 2), HEX(family === "a" ? "3" : "4")],
+      [uid(family, 3), tenant, uid(family, 1), uid(family, 2), sha256(NOTICE_TEXT)],
     );
     await owner.query(
       "INSERT INTO consent_receipts (id, tenant_id, consent_id, jwt, jwks_kid) VALUES ($1, $2, $3, 'a.b.c', 'kid-1')",
