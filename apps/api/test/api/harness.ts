@@ -61,8 +61,15 @@ export class FakeWebhookHttp implements WebhookHttp {
   calls: WebhookRequest[] = [];
   /** Statuses to answer with, oldest first; `"throw"` simulates a network failure. The last one repeats. */
   script: (number | "throw")[] = [200];
+  /** How long a request to a URL takes before it answers, in milliseconds. */
+  delayMs: Record<string, number> = {};
+  /** Every answer, in the order they were given: which URL and when (ms since the epoch). */
+  answers: { url: string; at: number }[] = [];
   async post(request: WebhookRequest): Promise<{ status: number }> {
     this.calls.push(request);
+    const delay = this.delayMs[request.url];
+    if (delay) await new Promise((r) => setTimeout(r, delay));
+    this.answers.push({ url: request.url, at: Date.now() });
     const next = this.script.length > 1 ? (this.script.shift() as number | "throw") : (this.script[0] as number | "throw");
     if (next === "throw") throw new Error("connect ECONNREFUSED");
     return { status: next };

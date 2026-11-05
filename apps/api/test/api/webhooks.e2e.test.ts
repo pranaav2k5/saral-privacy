@@ -17,6 +17,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   api.hooks.calls = [];
+  api.hooks.answers = [];
   api.hooks.script = [200];
 });
 
@@ -75,6 +76,14 @@ describe("registering endpoints", () => {
     await register(api.A.admin, { url: "https://audit.example.org/x", events: ["consent.withdrawn"] });
     const after = (await rows("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'webhook.endpoint_created'", [api.A.id]))[0]?.n as number;
     expect(after).toBe(before + 1);
+  });
+
+  test("concurrent registrations cannot exceed the cap of 10 (the count and the insert are serialised per tenant)", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]);
+    const results = await Promise.all(Array.from({ length: 16 }, (_, i) => register(api.B.admin, { url: `https://c${String(i)}.example.org/x`, events: ["consent.granted"] })));
+    expect(results.filter((r) => r.status === 201)).toHaveLength(10);
+    expect(results.filter((r) => r.status === 409)).toHaveLength(6);
+    expect((await rows("SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]))[0]?.n).toBe(10);
   });
 
   test("a tenant may have at most 10 endpoints", async () => {
@@ -137,14 +146,19 @@ describe("the outbox and delivery", () => {
     expect(api.hooks.calls).toHaveLength(0);
   });
 
-  test("two workers at once deliver each event exactly once", async () => {
-    for (let i = 0; i < 5; i++) await api.grant(api.A, { identifier: `+91970000000${String(i)}` });
-    api.hooks.calls = [];
-    const [a, b] = await Promise.all([worker.runOnce(new Date()), worker.runOnce(new Date())]);
-    expect(a.delivered + b.delivered).toBe(5);
-    expect(api.hooks.calls).toHaveLength(5);
-    expect(new Set(api.hooks.calls.map((c) => c.headers["Idempotency-Key"])).size).toBe(5);
-  });
+  test("several workers at once deliver each event exactly once, round after round", async () => {
+    // The race is in a narrow window (a claim whose lock lands just after another worker's commit), so one round
+    // proves little. Many rounds with four workers make a double delivery show up.
+    for (let round = 0; round < 12; round++) {
+      await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
+      for (let i = 0; i < 8; i++) await api.grant(api.A, { identifier: `+9197${String(round).padStart(2, "0")}00000${String(i)}` });
+      api.hooks.calls = [];
+      const results = await Promise.all(Array.from({ length: 4 }, () => worker.runOnce(new Date())));
+      expect(results.reduce((n, r) => n + r.delivered, 0)).toBe(8);
+      expect(api.hooks.calls).toHaveLength(8);
+      expect(new Set(api.hooks.calls.map((c) => c.headers["Idempotency-Key"])).size).toBe(8);
+    }
+  }, 60000);
 
   test("two workers claim different deliveries even while neither has finished (SKIP LOCKED)", async () => {
     await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
@@ -173,6 +187,95 @@ describe("the outbox and delivery", () => {
     }
     await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
   }, 20000);
+
+  describe("a slow endpoint cannot hold up the others", () => {
+    const fast = "https://fast.example.org/hook";
+    const slow = "https://slow.example.org/hook";
+    let fastId: string;
+    let slowId: string;
+
+    beforeAll(async () => {
+      await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
+      await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.A.id]);
+      fastId = uid("a", 96);
+      slowId = uid("a", 97);
+      for (const [id, url] of [[fastId, fast], [slowId, slow]] as const) {
+        await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES ($1, $2, $3, '{consent.granted}')", [id, api.A.id, url]);
+      }
+    });
+
+    // Leave things as the other tests expect: the original endpoint on, this describe's two endpoints off.
+    afterAll(async () => {
+      await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
+      await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE id = ANY($1)", [[fastId, slowId]]);
+      await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = NULL WHERE id = $1", [endpointId]);
+    });
+
+    const queue = async (endpoint: string, n: number) => {
+      for (let i = 0; i < n; i++) {
+        await api.db.owner.query(
+          "INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_type, payload, next_attempt_at) VALUES ($1, $2, $3, 'consent.granted', '{}', now() - interval '1 second')",
+          [uid("f", Math.floor(Math.random() * 1e9)), api.A.id, endpoint],
+        );
+      }
+    };
+
+    test("endpoints are served at the same time; the deliveries of one endpoint go one after another", async () => {
+      await queue(slowId, 3);
+      await queue(fastId, 3);
+      api.hooks.delayMs = { [slow]: 250, [fast]: 5 };
+      const started = Date.now();
+      const result = await worker.runOnce(new Date());
+      expect(result.delivered).toBe(6);
+      const at = (url: string) => api.hooks.answers.filter((a) => a.url === url).map((a) => a.at - started);
+      expect(Math.max(...at(fast))).toBeLessThan(200); // not waiting behind the slow endpoint
+      const slowTimes = at(slow);
+      expect(slowTimes).toHaveLength(3);
+      expect(slowTimes.every((t, i) => i === 0 || t - (slowTimes[i - 1] as number) >= 200)).toBe(true); // one at a time
+      api.hooks.delayMs = {};
+    });
+
+    test("an endpoint that uses up its time budget has the rest of its batch released, not counted as tried", async () => {
+      await queue(slowId, 5);
+      api.hooks.delayMs = { [slow]: 80 };
+      worker.endpointBudgetMs = 100;
+      try {
+        const result = await worker.runOnce(new Date());
+        expect(result.delivered).toBe(2);
+        expect(result.released).toBe(3);
+        const left = await rows("SELECT attempts, state FROM webhook_deliveries WHERE state = 'pending' AND endpoint_id = $1", [slowId]);
+        expect(left).toEqual([{ attempts: 0, state: "pending" }, { attempts: 0, state: "pending" }, { attempts: 0, state: "pending" }]);
+        worker.endpointBudgetMs = 60_000;
+        api.hooks.delayMs = {};
+        expect((await worker.runOnce(new Date(Date.now() + 1000))).delivered).toBe(3);
+      } finally {
+        worker.endpointBudgetMs = 60_000;
+        api.hooks.delayMs = {};
+      }
+    });
+
+    test("one tenant with a large backlog cannot take every slot of a claim", async () => {
+      await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
+      for (let i = 0; i < 30; i++) await queue(fastId, 1);
+      const bEndpoint = uid("b", 98);
+      await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES ($1, $2, 'https://b.example.org/hook', '{consent.granted}')", [bEndpoint, api.B.id]);
+      for (let i = 0; i < 3; i++) {
+        await api.db.owner.query("INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_type, payload, next_attempt_at) VALUES ($1, $2, $3, 'consent.granted', '{}', now() - interval '1 second')", [uid("e", 5000 + i), api.B.id, bEndpoint]);
+      }
+      const c = await connect(api.db);
+      try {
+        await c.query("BEGIN");
+        await c.query("SET LOCAL ROLE saral_worker");
+        const claimed = await worker.claim(c, new Date(), 50, 20);
+        expect(claimed.filter((d) => d.tenant_id === api.A.id)).toHaveLength(20);
+        expect(claimed.filter((d) => d.tenant_id === api.B.id)).toHaveLength(3);
+      } finally {
+        await c.query("ROLLBACK").catch(() => undefined);
+        await c.end();
+      }
+      await api.db.owner.query("UPDATE webhook_deliveries SET state = 'delivered' WHERE state = 'pending'");
+    });
+  });
 
   test("a failing endpoint is retried later with backoff, then marked failed after 15 attempts", async () => {
     await api.grant(api.A, { identifier: "+919800000001" });

@@ -12,13 +12,22 @@ describe("isPublicAddress", () => {
     "169.254.0.1", "0.0.0.0", "0.1.2.3", "100.64.0.1", "100.127.255.255", "192.0.0.1", "192.0.2.1", "198.18.0.1", "198.51.100.1",
     "203.0.113.1", "224.0.0.1", "239.255.255.255", "240.0.0.1", "255.255.255.255",
     "::1", "::", "fe80::1", "fc00::1", "fd12:3456::1", "ff02::1", "2001:db8::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254",
-    "64:ff9b::7f00:1",
+    "64:ff9b::7f00:1", "64:ff9b:1::1",
+    // Addresses that embed an IPv4 address or are reserved, and the old site-local range.
+    "2002:7f00:1::1", "2002:0a00:1::1", "2002:a9fe:a9fe::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "fec0::1", "::7f00:1", "::a00:1",
+    "3fff::1", "2001:db8:1::1", "4000::1", "8000::1", "::ffff:8.8.8.8",
   ])("%s is not public", (a) => {
     expect(isPublicAddress(a)).toBe(false);
   });
 
   test.each(["", "not an address", "256.1.1.1", "1.2.3", "01.2.3.4"])("%p is not public (unparseable)", (a) => {
     expect(isPublicAddress(a)).toBe(false);
+  });
+
+  test("ordinary global unicast IPv6 stays public", () => {
+    for (const a of ["2a00:1450:4009:81f::200e", "2606:2800:220:1:248:1893:25c8:1946", "2001:4860:4860::8844", "2620:fe::fe", "2400:cb00::1"]) {
+      expect({ a, ok: isPublicAddress(a) }).toEqual({ a, ok: true });
+    }
   });
 
   test("172.15.x and 172.32.x are outside the private range", () => {

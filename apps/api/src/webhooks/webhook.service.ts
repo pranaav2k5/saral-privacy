@@ -51,6 +51,8 @@ export class WebhookService {
     }
     const id = randomUUID();
     return this.db.inScope({ tenantId }, async (c) => {
+      // Serialise per tenant, so two registrations cannot both see 9 endpoints and both insert the 10th and 11th.
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const count = (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM webhook_endpoints WHERE disabled_at IS NULL")).rows[0]?.n ?? 0;
       if (count >= MAX_ENDPOINTS) throw new ConflictException({ error: "too_many_endpoints", message: `a tenant may have at most ${String(MAX_ENDPOINTS)} active endpoints` });
       const row = (await c.query<{ created_at: Date }>("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES ($1, $2, $3, $4) RETURNING created_at", [id, tenantId, url, events])).rows[0] as { created_at: Date };

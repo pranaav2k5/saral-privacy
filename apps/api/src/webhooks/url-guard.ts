@@ -24,11 +24,12 @@ for (const [net, prefix] of [
 ] as const) {
   BLOCKED.addSubnet(net, prefix, "ipv4");
 }
-// IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) are checked by Node against the IPv4 rules above.
-for (const [net, prefix] of [
-  ["::", 128], ["::1", 128], ["64:ff9b::", 96], ["100::", 64], ["2001:db8::", 32],
-  ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
-] as const) {
+// IPv6 is the other way round: only global unicast (2000::/3) can be public, which already excludes loopback,
+// unspecified, link-local, unique-local, multicast, site-local, IPv4-mapped, IPv4-compatible and NAT64 addresses. Inside
+// 2000::/3 these ranges are still not public: Teredo and 6to4 (both embed an IPv4 address), and documentation prefixes.
+const GLOBAL_V6 = new BlockList();
+GLOBAL_V6.addSubnet("2000::", 3, "ipv6");
+for (const [net, prefix] of [["2001::", 32], ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20]] as const) {
   BLOCKED.addSubnet(net, prefix, "ipv6");
 }
 
@@ -36,7 +37,8 @@ for (const [net, prefix] of [
 export function isPublicAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 0) return false;
-  return !BLOCKED.check(address, family === 4 ? "ipv4" : "ipv6");
+  if (family === 4) return !BLOCKED.check(address, "ipv4");
+  return GLOBAL_V6.check(address, "ipv6") && !BLOCKED.check(address, "ipv6");
 }
 
 const MAX_URL_LENGTH = 500;

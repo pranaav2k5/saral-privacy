@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:https";
+import { createServer as createTlsServer } from "node:tls";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,6 +77,32 @@ describe("createHttpsClient", () => {
   test("gives up on a server that does not answer", async () => {
     handler = () => undefined; // never respond
     await expect(client(300).post({ url: url(), headers: {}, body: "{}" })).rejects.toThrow(/timed out/);
+  });
+
+  test("gives up after the overall deadline even when the server keeps sending a trickle of bytes (idle timers never fire)", async () => {
+    const drip = createTlsServer({ key, cert }, (socket) => {
+      socket.once("data", () => {
+        // A status line sent one byte at a time: the connection is never idle, and the response never completes.
+        const bytes = Buffer.from("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n");
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < bytes.length && !socket.destroyed) socket.write(bytes.subarray(i++, i));
+          else clearInterval(timer);
+        }, 40);
+        socket.on("close", () => clearInterval(timer));
+      });
+      socket.on("error", () => undefined);
+    });
+    await new Promise<void>((resolve) => drip.listen(0, "127.0.0.1", resolve));
+    const dripPort = (drip.address() as AddressInfo).port;
+    const started = Date.now();
+    try {
+      // The idle timeout is far longer than the gaps between bytes; only an overall deadline can stop this.
+      await expect(createHttpsClient({ lookup: toLoopback, ca: cert, timeoutMs: 400 }).post({ url: `https://localhost:${String(dripPort)}/x`, headers: {}, body: "{}" })).rejects.toThrow(/timed out/);
+    } finally {
+      await new Promise((resolve) => drip.close(resolve));
+    }
+    expect(Date.now() - started).toBeLessThan(1500);
   });
 
   test("does not hang on a large response body", async () => {
