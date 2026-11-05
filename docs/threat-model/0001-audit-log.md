@@ -32,6 +32,7 @@ Application server to database; application server to KMS; application to S3; an
 | Denial of service | Verifying a very large day is slow. | Verification is linear; the Merkle recursion is logarithmic in depth. Benchmark in week 8 per `docs/PLAN.md`. | not yet measured |
 | Elevation of privilege | Replaying an old anchor to hide new rows. | The anchor is bound to a tenant, date, count and head hash. Detecting a stale anchor needs the next day's anchor to chain from it, which the nightly job must enforce. | open item for the nightly job |
 | Key compromise | The HMAC key leaks. | Key held in KMS or Vault, never logged, versioned by `hmacSchemaVersion` for rotation. The anchor limits the damage to the time since the last anchor. | open item for the KMS adapter |
+| Tampering | A leaked retired key is used to append entries labelled with the old `hmacSchemaVersion` after a rotation. The label is not part of the MAC. | Key versions may not decrease along the chain (`key_version_regression`), also across daily segments through `startHmacSchemaVersion`. Each version must use an independent random key, and retired keys must be disabled for signing in KMS. | `chain.test.ts`: key rotation |
 
 ## Residual risks
 

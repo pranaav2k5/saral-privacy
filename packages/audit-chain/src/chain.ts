@@ -16,6 +16,7 @@ export type ChainFailure =
   | "prev_mismatch"
   | "seq_gap"
   | "unknown_key"
+  | "key_version_regression"
   | "unsupported_version"
   | "invalid_fields"
   | "tenant_mismatch";
@@ -53,6 +54,8 @@ export interface VerifyOptions {
   startPrevHash?: string;
   /** seqNo of the entry just before the first one. Default "0" when starting at genesis, otherwise unchecked. */
   startSeqNo?: string;
+  /** Key version of the entry just before the first one. Entries may not use a lower version than this. */
+  startHmacSchemaVersion?: number;
 }
 
 const DIGITS = /^(0|[1-9][0-9]*)$/;
@@ -61,7 +64,8 @@ const DIGITS = /^(0|[1-9][0-9]*)$/;
  * Recomputes every hash in order. Entries must be sorted by seqNo, belong to one tenant, and have
  * contiguous seqNo. This proves the rows were not edited, reordered or removed from the middle. It
  * cannot see rows removed from the end, or a rewrite by someone holding the key: compare against an
- * anchor for that (see `verifyAgainstAnchor`).
+ * anchor for that (see `verifyAgainstAnchor`). Key versions may only stay the same or increase along
+ * the chain, so a leaked retired key cannot be used to append entries after a rotation.
  */
 export function verifyChain(
   entries: readonly ChainEntry[],
@@ -78,6 +82,7 @@ export function verifyChain(
         : null;
   const tenant = entries[0]?.tenantId;
   let last: string | null = null;
+  let highestKeyVersion = opts.startHmacSchemaVersion ?? 0;
 
   for (const e of entries) {
     const fail = (failure: ChainFailure): ChainResult => ({ ok: false, failure, seqNo: e.seqNo });
@@ -89,6 +94,10 @@ export function verifyChain(
     if (!hashesEqual(e.prevHash, prev)) return fail("prev_mismatch");
     const key = resolveKey(e.hmacSchemaVersion);
     if (key === undefined) return fail("unknown_key");
+    // The key version label is not itself covered by the MAC, so forbid going back to a retired key:
+    // someone holding a leaked old key must not be able to append entries under it after a rotation.
+    if (e.hmacSchemaVersion < highestKeyVersion) return fail("key_version_regression");
+    highestKeyVersion = e.hmacSchemaVersion;
     let canonical: string;
     try {
       canonical = canonicalAuditEntry(e, e.canonicalSchemaVersion);

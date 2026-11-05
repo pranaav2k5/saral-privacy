@@ -143,3 +143,43 @@ describe("verifyChain", () => {
     );
   });
 });
+
+describe("key rotation", () => {
+  const KEY_V2 = new Uint8Array(32).fill(8);
+  const resolveBoth = (v: number): Uint8Array | undefined => (v === 1 ? KEY : v === 2 ? KEY_V2 : undefined);
+
+  function rotating(versions: number[]): ChainEntry[] {
+    const out: ChainEntry[] = [];
+    let prev = GENESIS_HASH;
+    versions.forEach((v, i) => {
+      const e = sealEntry(fieldsFor(i + 1), prev, v === 1 ? KEY : KEY_V2, { hmacSchemaVersion: v });
+      out.push(e);
+      prev = e.entryHash;
+    });
+    return out;
+  }
+
+  test("a chain may move from key version 1 to 2", () => {
+    expect(verifyChain(rotating([1, 1, 2, 2, 2]), resolveBoth)).toMatchObject({ ok: true, count: 5 });
+  });
+
+  test("an entry sealed with a retired key after a newer one is rejected", () => {
+    // Someone holding a leaked version-1 key appends an entry labelled version 1 after rotation to 2.
+    expect(verifyChain(rotating([1, 1, 2, 1, 2]), resolveBoth)).toEqual({
+      ok: false,
+      failure: "key_version_regression",
+      seqNo: "4",
+    });
+  });
+
+  test("a later segment must not start below the key version that ended the previous one", () => {
+    const whole = rotating([1, 2, 2, 1]);
+    const seg = whole.slice(3);
+    expect(
+      verifyChain(seg, resolveBoth, { startPrevHash: whole[2]?.entryHash, startSeqNo: "3", startHmacSchemaVersion: 2 }),
+    ).toEqual({ ok: false, failure: "key_version_regression", seqNo: "4" });
+    expect(
+      verifyChain(seg, resolveBoth, { startPrevHash: whole[2]?.entryHash, startSeqNo: "3", startHmacSchemaVersion: 1 }),
+    ).toMatchObject({ ok: true });
+  });
+});
