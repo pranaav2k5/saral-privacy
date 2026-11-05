@@ -2,7 +2,7 @@
 
 A DPDP-native consent and privacy operations platform for Indian small and mid-sized businesses. Notice generation in Indian languages, consent capture with signed receipts, data-principal rights handling, records of processing, breach workflow, and a tamper-evident audit log.
 
-Status: **scaffolded**. The plan is approved and the repository skeleton builds and passes its smoke tests. No product features yet.
+Status: **scaffolded**. The plan is approved (its open decisions are still to be answered) and the repository skeleton builds and passes its smoke tests. No product features yet.
 
 Key date: the Digital Personal Data Protection Act's full compliance deadline is **13 May 2027**.
 
@@ -13,7 +13,7 @@ Key date: the Digital Personal Data Protection Act's full compliance deadline is
 
 ## Getting started
 
-Prerequisites: Node 24 LTS (22.12 or newer works), pnpm 11, Python 3.13 with uv, Terraform 1.9 or newer, Docker.
+Prerequisites: Node 24 LTS (22.12 or newer works), pnpm 11, Python 3.13 with uv, Terraform 1.10 or newer, Docker.
 
 ```
 pnpm install

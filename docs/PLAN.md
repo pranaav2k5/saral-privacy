@@ -1,6 +1,6 @@
 # Saral Privacy: Master Plan
 
-Status: Draft v0.1, written 2026-11-05. Approved by the owner on 2026-11-05. The repository scaffold is built (see section 14 and ADR-0001).
+Status: Draft v0.1, written 2026-11-05. Approved by the owner on 2026-11-05; the open decisions in section 13 are still to be answered. The repository scaffold is built (see section 14 and ADR-0001).
 Owner: pranaav2k5.
 
 This plan merges two input documents and re-bases them on today's date:
@@ -106,7 +106,7 @@ If not, stay a SaaS vendor to Data Fiduciaries and partner with one of the regis
 ### P0: required for the first pilot (end of week 10)
 
 1. **Privacy Notice Generator.** Free public version in English and Hindi (week 4). In-product version with tenant-specific data, versioning, SHA-256 canonical hash, and public notice URL.
-2. **Consent capture.** Web JS SDK (UMD, 25 kB gzipped or less) with granular per-purpose toggles, defaults off for non-essential purposes, and a withdrawal path as easy as giving consent.
+2. **Consent capture.** Web JS SDK (IIFE build for script tags plus ESM and CJS, 25 kB gzipped or less for the IIFE file) with granular per-purpose toggles, defaults off for non-essential purposes, and a withdrawal path as easy as giving consent.
 3. **Signed consent receipts.** Kantara KI-CR-v1.1.0 JSON as an RS256 JWT, signed with a KMS-managed key. Public JWKS at `/.well-known/jwks.json`. Conform to the ISO/IEC TS 27560 minimal record where possible.
 4. **Tamper-evident audit log.** HMAC chain, nightly Merkle anchor, `/v1/audit/verify`.
 5. **Data-principal rights (DSR).** Access, correction, erasure, nomination, grievance. State machine, SLA timers, DPO review screen.
@@ -437,7 +437,7 @@ saral-privacy/
     api/               NestJS control plane
     ml/                FastAPI service
   packages/
-    sdk-js/            consent SDK (UMD, 25 kB gzipped budget)
+    sdk-js/            consent SDK (IIFE + ESM + CJS, 25 kB gzipped budget on the IIFE)
     schemas/           canonical string and receipt schemas (versioned)
     verifier/          open-source audit verifier
   infra/
@@ -445,4 +445,4 @@ saral-privacy/
   .github/workflows/   CI
 ```
 
-Branching: trunk-based on `main`, short-lived feature branches, pull-request review required, secret scanning and dependency scanning on from the first commit.
+Branching: trunk-based on `main`, short-lived feature branches, pull-request review expected (branch protection is not configured; see CONTRIBUTING.md), secret scanning and dependency scanning on from the first commit.

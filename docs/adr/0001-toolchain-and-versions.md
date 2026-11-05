@@ -27,7 +27,7 @@ Date: 2026-11-05
 - tsup builds an IIFE for script tags, plus ESM and CJS for npm consumers. There is no true UMD build because tsup does not produce one. The 25 kB gzipped budget applies to the IIFE file and is enforced by size-limit.
 
 **Infrastructure**
-- Terraform 1.9 or newer, AWS provider `~> 6.0`, tests with the native `terraform test` and `mock_provider`.
+- Terraform 1.10 or newer, AWS provider `~> 6.0`, tests with the native `terraform test` and `mock_provider`.
 - The audit anchor bucket module uses Object Lock in `COMPLIANCE` mode in prod and `GOVERNANCE` mode in dev and staging, with 7-year default retention (decision D11). AWS now allows enabling Object Lock on an existing bucket, so bucket creation order is not a one-way door, but creating it locked in Terraform stays the rule.
 - The bucket uses AES256 until the KMS module exists. Four Checkov checks are suppressed inline with reasons (access logging, cross-region replication, customer-managed KMS key, event notifications). Each one needs a resource that a later plan adds.
 - Terraform state locking uses S3-native `use_lockfile`, not a DynamoDB table.
