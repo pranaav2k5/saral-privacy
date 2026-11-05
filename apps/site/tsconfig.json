@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@saral/notice": ["../../packages/notice/src/index.ts"]
     }
   },
   "include": [

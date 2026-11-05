@@ -1,24 +1,58 @@
 @import "tailwindcss";
 
+/*
+ * Palette and type for the site. The sheet (the notice itself) is set in a serif, the controls in the
+ * system sans. System fonts only: a privacy tool should not make third-party font requests.
+ * Contrast (WCAG): ink on blotter 12.2:1, ink-soft on sheet 7.5:1, action on sheet 7.9:1,
+ * stamp on sheet 6.9:1, field border on sheet 4.3:1.
+ */
+@theme {
+  --color-blotter: #eef2f4;
+  --color-sheet: #ffffff;
+  --color-ink: #1b2a41;
+  --color-ink-soft: #4a5a70;
+  --color-rule: #c9d3da;
+  --color-field: #6b7a8a;
+  --color-action: #0f5c6e;
+  --color-stamp: #a8321f;
+  --font-sheet: Georgia, "Noto Serif", "Noto Serif Devanagari", "Kohinoor Devanagari", "Nirmala UI", serif;
+  --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans", "Noto Sans Devanagari", "Nirmala UI", sans-serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-blotter);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-action);
+  outline-offset: 2px;
+}
+
+/* The one moving part: the status stamp lands on the sheet once, when the notice is first created. */
+@keyframes stamp-in {
+  from {
+    opacity: 0;
+    transform: rotate(-6deg) scale(1.7);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(-6deg) scale(1);
+  }
+}
+
+.notice-stamp {
+  transform: rotate(-6deg);
+  animation: stamp-in 240ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice-stamp {
+    animation: none;
+  }
 }
