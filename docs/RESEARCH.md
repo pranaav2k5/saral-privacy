@@ -74,3 +74,17 @@ These claims appear in the input documents. I did not check them, so they carry 
 4. Build an AWS cost estimate for dev, staging, and prod.
 5. Sign up for Privy, Redacto, OneTrust, and Perfios trials and record what they cover and how they price.
 6. Run the 25 discovery interviews and write the one-page summary.
+
+## 6. Kantara Consent Receipt v1.1.0, checked against the specification text (2026-11-06)
+
+Source: the specification PDF "Consent Receipt Specification", Kantara Initiative Technical Specification Recommendation, document version 1.1.0, document date 2018-02-20, JSON schema marked "DRAFT 6, 2017-11-17" (a copy is hosted at <https://www.surveillancetrust.org/wp-content/uploads/2023/10/Consent-Receipt-Specification.pdf>; the Feasibility Study links to the same file). I read the text of sections 4.2 to 4.8.
+
+Findings:
+
+- **Required top-level fields** (schema section 4.8): `version` (the string `KI-CR-v1.1.0`), `jurisdiction`, `consentTimestamp` (integer seconds since the epoch), `collectionMethod`, `consentReceiptID`, `piiPrincipalId`, `piiControllers`, `services`, `policyUrl`, `sensitive`, `spiCat`. Optional: `publicKey`, `language` (ISO 639-1).
+- **Per controller (required):** `piiController`, `contact`, `address` (a schema.org PostalAddress object), `email`, `phone` (RFC 3966 `tel:` URI). Optional: `onBehalf`, `piiControllerUrl`.
+- **Per service:** `service` and `purposes`. **Per purpose (required):** `consentType`, `purposeCategory`, `piiCategory`, `termination`, `thirdPartyDisclosure`; `thirdPartyName` is required when disclosure is true. Optional: `purpose`, `primaryPurpose`. `spiCat` must be non-empty when `sensitive` is true.
+- **The prose and the schema disagree.** Section 4.4.10 says `policyURL` and 4.4.9 says `piiControllerURL`; the schema says `policyUrl` and `piiControllerUrl`. Section 4.5.5 says `purposeCategory` is a string; the schema says an array of strings. Section 4.2 says a JSON receipt MUST be valid per the schema, so the code follows the schema. Someone consuming our receipts with a strict reading of the prose would see different field names.
+- **No JWT profile.** The specification does not define a JWT or JWS serialisation. Its security section only says receipts used as proof should be signed. Signing the JSON as an RS256 JWT with a JWKS is our choice (decision in `docs/PLAN.md`), not something the specification requires or forbids.
+- **The principal identifier.** The specification lets `piiPrincipalId` be an email address. We use a pseudonymous UUID, which the specification also allows ("claim, defined/namespace").
+- **Not verified:** whether the DPB's eventual Consent Manager interoperability standard will use this format. The Feasibility Study's expectation that it will reflect Kantara and ISO/IEC TS 27560 is unconfirmed. ISO/IEC TS 27560 itself is paywalled and was not read.
