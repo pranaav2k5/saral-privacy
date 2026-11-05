@@ -1,6 +1,6 @@
 # Saral Privacy: Master Plan
 
-Status: Draft v0.1, written 2026-11-05. Approved by the owner on 2026-11-05; the open decisions in section 13 are still to be answered. The repository scaffold is built (see section 14 and ADR-0001).
+Status: Draft v0.1, written 2026-11-05. Approved by the owner on 2026-11-05; the open decisions in section 13 are still to be answered. The repository scaffold and the first product slice are built (see section 15 for what exists, section 14 and ADR-0001 for the layout).
 Owner: pranaav2k5.
 
 This plan merges two input documents and re-bases them on today's date:
@@ -446,3 +446,32 @@ saral-privacy/
 ```
 
 Branching: trunk-based on `main`, short-lived feature branches, pull-request review expected (branch protection is not configured; see CONTRIBUTING.md), secret scanning and dependency scanning on from the first commit.
+
+---
+
+## 15. Build status (2026-11-06)
+
+This section records what exists in the repository against the scope in section 4. The architecture is in `docs/design/HLD.md`, the module detail in `docs/design/LLD.md`, the API contract in `docs/design/openapi.yaml`. "Built" means implemented and tested in this repository; it does not mean legally reviewed, deployed, or tested by a customer.
+
+| P0 item (section 4) | Status | Where | What is missing |
+|---|---|---|---|
+| 1. Notice generator, free public version | Built | `apps/site` (`/notice-generator`), `packages/notice` | Legal and native-speaker review of the English and Hindi templates (they are AI-drafted). In-product versioned notices with a public URL (the database and the public read route exist; the publish flow does not). |
+| 2. Consent capture, web SDK | Built | `packages/sdk-js` | Age gate for children (Rule 10), hosting and Subresource Integrity, proof that the person controls the identifier, human-reviewed Hindi. |
+| 3. Signed consent receipts | Built | `packages/receipts`, API routes, `/.well-known/jwks.json` | KMS-held signing key (a development key provider exists). Public verifier page. |
+| 4. Tamper-evident audit log | Built (library, database, verify endpoint) | `packages/audit-chain`, migration 0002, `/v1/audit/*` | Nightly anchor job and the S3 Object Lock write; the standalone verifier command-line tool; the performance benchmark planned for week 8. |
+| 5. Data-principal rights (DSR) | Designed only | `docs/design/LLD.md` section 9 | Everything. |
+| 6. Webhooks | Built | `apps/api/src/webhooks` | Delivery log and manual redelivery routes, secret rotation route, auto-disable of failing endpoints. |
+| 7. Multi-tenancy and auth | Partly | Row-level security and API keys: built. Staff login with MFA: designed only. | Staff login, MFA, sessions, the `principal` scope and wallet login. |
+
+| P1 item | Status |
+|---|---|
+| 8. RoPA wizard | Not started |
+| 9. Breach workflow | Not started |
+| 10. DPO dashboard | Designed only (`apps/web` is a shell) |
+| 11. Four more languages | Not started |
+| 12. External VAPT | Not started. Book the slot in week 6 as planned. |
+| 13. Public verifier page and JWKS | JWKS built; verifier page not built |
+
+Cross-cutting work not done: KMS adapters and the production deployment (only the audit anchor bucket Terraform module exists), rate limiting, the AWS cost estimate (week 3), the IndicTrans2 benchmark, all discovery, legal and go-to-market work in sections 8 and 12 (these are not engineering tasks), and the open decisions in section 13.
+
+Two risks found while building, both in `docs/threat-model/0004-consent-api.md`: a consent can be submitted for someone else's identifier through a publishable key, and there is no rate limiting. Both need a decision before a pilot.
