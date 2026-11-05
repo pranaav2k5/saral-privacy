@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.next
+**/.venv
+**/__pycache__
+**/.terraform
+.git
+.superpowers
+.env
+.env.*
+!.env.example
+docs
