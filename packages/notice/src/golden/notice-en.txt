@@ -1,0 +1,52 @@
+# Privacy notice: Example Controller Pvt Ltd
+
+> DRAFT: this notice was generated from a template that has not been reviewed by a lawyer. Have your own counsel check it before you publish it. It is not legal advice.
+
+## Who we are
+
+Example Controller Pvt Ltd ("we") is the data fiduciary that decides why and how your personal data is processed. Our website is https://example.org.
+Data protection officer or grievance contact: A. Example.
+
+## What personal data we process and why
+
+We ask for your consent to process the personal data listed below, for each purpose.
+
+1. Product updates
+   What we do: Send you emails about new features of our app.
+   Personal data: Email address, Name
+   How long we keep it: Until you withdraw consent, then 30 days
+
+2. Analytics
+   What we do: Understand how the app is used so we can improve it.
+   Personal data: Device type, Pages visited
+   How long we keep it: 12 months
+
+## Who we share it with
+
+We share your personal data with: Example Analytics Ltd.
+
+## Your rights and how to use them
+
+You have the right to:
+- withdraw your consent at any time;
+- get a summary of the personal data we process and of the other parties we have shared it with;
+- ask us to correct, complete or update your personal data, or to erase it;
+- have your grievance handled by us;
+- nominate another person to exercise your rights if you die or cannot act yourself.
+To use these rights, go to https://example.org/privacy/requests or write to privacy@example.org.
+
+## How to withdraw your consent
+
+You can withdraw your consent at any time, as easily as you gave it, at https://example.org/privacy/withdraw. Withdrawing does not affect processing that took place before you withdrew.
+
+## Children's personal data
+
+We do not knowingly process personal data of children (people under 18).
+
+## How to complain
+
+Contact us first: privacy@example.org, or write to: 1 Example Road, Bengaluru 560001, India. We will respond to your grievance. If you are not satisfied with our response, you can complain to the Data Protection Board of India.
+
+## About this draft
+
+This notice was created from a template. It does not guarantee legal compliance. The organisation named above is responsible for its content.

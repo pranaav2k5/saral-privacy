@@ -211,6 +211,8 @@ importers:
         specifier: workspace:*
         version: link:../schemas
 
+  packages/notice: {}
+
   packages/receipts:
     dependencies:
       '@saral/schemas':
