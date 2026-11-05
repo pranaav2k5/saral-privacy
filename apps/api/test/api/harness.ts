@@ -5,6 +5,8 @@ import { AppModule } from "../../src/app.module.js";
 import { issueApiKey } from "../../src/auth/api-keys.js";
 import { KEY_PROVIDER, type KeyProvider } from "../../src/keys/key-provider.js";
 import { SETTINGS, type Settings } from "../../src/settings.js";
+import { URL_RESOLVER, WEBHOOK_HTTP, type WebhookHttp, type WebhookRequest } from "../../src/webhooks/tokens.js";
+import type { Resolver } from "../../src/webhooks/url-guard.js";
 import { NOTICE_TEXT, TENANT_A, TENANT_B, createTestDb, sha256, uid, type TestDb } from "../db/helpers.js";
 
 export const MASTER = "test-master-secret-that-is-at-least-32-characters-long";
@@ -54,10 +56,31 @@ export interface Tenant {
   dpo: string;
 }
 
+/** Stands in for the network: records every webhook request and answers as scripted. */
+export class FakeWebhookHttp implements WebhookHttp {
+  calls: WebhookRequest[] = [];
+  /** Statuses to answer with, oldest first; `"throw"` simulates a network failure. The last one repeats. */
+  script: (number | "throw")[] = [200];
+  async post(request: WebhookRequest): Promise<{ status: number }> {
+    this.calls.push(request);
+    const next = this.script.length > 1 ? (this.script.shift() as number | "throw") : (this.script[0] as number | "throw");
+    if (next === "throw") throw new Error("connect ECONNREFUSED");
+    return { status: next };
+  }
+}
+
+/** Names ending in .example.org are public; `internal.example` points at a private address. */
+export const fakeResolver: Resolver = async (host) => {
+  if (host === "internal.example") return ["10.0.0.5"];
+  if (host.endsWith(".example.org")) return ["93.184.216.34"];
+  throw new Error("ENOTFOUND");
+};
+
 export interface Api {
   app: INestApplication;
   db: TestDb;
   keys: KeyProvider;
+  hooks: FakeWebhookHttp;
   A: Tenant;
   B: Tenant;
   http: () => ReturnType<typeof request>;
@@ -68,7 +91,12 @@ export interface Api {
 export async function startApi(): Promise<Api> {
   const db = await createTestDb();
   const settings: Settings = { databaseUrl: db.url, nodeEnv: "test", devMasterSecret: MASTER };
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(SETTINGS).useValue(settings).compile();
+  const hooks = new FakeWebhookHttp();
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(SETTINGS).useValue(settings)
+    .overrideProvider(WEBHOOK_HTTP).useValue(hooks)
+    .overrideProvider(URL_RESOLVER).useValue(fakeResolver)
+    .compile();
   const app = moduleRef.createNestApplication();
   // Listen once on an ephemeral port: supertest then reuses the server instead of adding a listener per request.
   await app.listen(0, "127.0.0.1");
@@ -115,6 +143,7 @@ export async function startApi(): Promise<Api> {
     app,
     db,
     keys,
+    hooks,
     A,
     B,
     http,

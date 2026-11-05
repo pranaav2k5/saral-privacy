@@ -8,6 +8,7 @@ import { AuditService } from "../audit/audit.service.js";
 import type { ApiKeyKind } from "../auth/api-keys.js";
 import { Database } from "../db/database.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
+import { WebhookService } from "../webhooks/webhook.service.js";
 
 export interface GrantInput {
   noticeId: string;
@@ -59,6 +60,7 @@ export class ConsentService {
   constructor(
     private readonly db: Database,
     private readonly audit: AuditService,
+    private readonly webhooks: WebhookService,
     @Inject(KEY_PROVIDER) private readonly keys: KeyProvider,
   ) {}
 
@@ -125,6 +127,11 @@ export class ConsentService {
         throw e;
       }
       await c.query("INSERT INTO consent_receipts (id, tenant_id, consent_id, jwt, jwks_kid) VALUES ($1, $2, $3, $4, $5)", [receiptId, tenantId, consentId, jwt, this.keys.receiptSigner().kid]);
+      // Ids and states only: no identifier, and no receipt text.
+      await this.webhooks.enqueue(c, tenantId, "consent.granted", {
+        consentId, receiptId, noticeId: notice.id, principalId, collectionMethod, status: "granted",
+        purposes: purposes.map((p) => ({ key: p.key, granted: p.granted })),
+      });
       return { consentId, receiptId, receipt: jwt };
     });
   }
@@ -154,6 +161,9 @@ export class ConsentService {
       await this.audit.append(c, tenantId, {
         actorType: "principal", actorId: row.principal_id, action: "consent.withdrawn", refTable: "consent_records", refId: consentId,
         payloadSha256: sha256Hex(canonicalConsentRecord(after)),
+      });
+      await this.webhooks.enqueue(c, tenantId, "consent.withdrawn", {
+        consentId, noticeId: row.notice_id, principalId: row.principal_id, status: "withdrawn", withdrawnAt: after.withdrawnAt as string,
       });
       return { consentId, status: "withdrawn", withdrawnAt: after.withdrawnAt as string };
     });
