@@ -1,4 +1,5 @@
 import { buildReceiptClaims, validateClaims, ReceiptError } from "./claims";
+import { createLocalSigner, signReceipt } from "./index";
 import { validInput } from "./test-helpers";
 
 const NOW = new Date("2026-11-06T09:30:05.000Z");
@@ -103,6 +104,50 @@ describe("buildReceiptClaims", () => {
     const before = JSON.stringify(input);
     buildReceiptClaims(input, NOW);
     expect(JSON.stringify(input)).toBe(before);
+  });
+});
+
+describe("references to the consent and the notice (extension claims)", () => {
+  const REFS = {
+    consentId: "33333333-3333-4333-8333-333333333333",
+    noticeId: "55555555-5555-4555-8555-555555555555",
+    noticeSha256: "ab".repeat(32),
+  };
+
+  test("are added as saral-prefixed claims when given, and omitted when not", () => {
+    const withRefs = buildReceiptClaims({ ...validInput(), ...REFS }, NOW);
+    expect(withRefs.saralConsentId).toBe(REFS.consentId);
+    expect(withRefs.saralNoticeId).toBe(REFS.noticeId);
+    expect(withRefs.saralNoticeSha256).toBe(REFS.noticeSha256);
+    const without = buildReceiptClaims(validInput(), NOW);
+    expect("saralConsentId" in without).toBe(false);
+    expect("saralNoticeId" in without).toBe(false);
+    expect("saralNoticeSha256" in without).toBe(false);
+  });
+
+  test.each([
+    ["a consent id that is not a UUID", { consentId: "nope" }],
+    ["a notice id that is not a UUID", { noticeId: "nope" }],
+    ["a notice hash that is not 64 lowercase hex", { noticeSha256: "AB".repeat(32) }],
+    ["a notice hash that is too short", { noticeSha256: "ab" }],
+  ])("rejects %s", (_n, bad) => {
+    expect(() => buildReceiptClaims({ ...validInput(), ...REFS, ...bad }, NOW)).toThrow(ReceiptError);
+  });
+
+  test("a receipt carrying the references verifies and round-trips them", () => {
+    const c = JSON.parse(JSON.stringify(buildReceiptClaims({ ...validInput(), ...REFS }, NOW))) as unknown;
+    expect(validateClaims(c)).toMatchObject({ saralConsentId: REFS.consentId, saralNoticeSha256: REFS.noticeSha256 });
+    expect(() => validateClaims({ ...(c as object), saralNoticeSha256: "zz" })).toThrow(ReceiptError);
+  });
+});
+
+describe("a receipt that is too large to verify is never signed", () => {
+  test("signing refuses a payload the verifier would refuse (16 KiB limit)", async () => {
+    const { signer } = await createLocalSigner();
+    const input = validInput();
+    input.purposes = Array.from({ length: 60 }, (_, i) => ({ ...(input.purposes[0] as object), purpose: `p${String(i)} ` + "x".repeat(400) })) as typeof input.purposes;
+    const claims = buildReceiptClaims(input, NOW);
+    await expect(signReceipt(claims, signer)).rejects.toThrow(/too large/);
   });
 });
 

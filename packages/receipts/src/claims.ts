@@ -66,6 +66,10 @@ export interface KantaraReceiptClaims {
   spiCat: string[];
   /** Issue time, seconds since the Unix epoch (JWT registered claim). */
   iat: number;
+  /** Extension claims (the specification allows additional fields): which consent and which exact notice text this receipt is for. */
+  saralConsentId?: string;
+  saralNoticeId?: string;
+  saralNoticeSha256?: string;
 }
 
 export interface ReceiptInput {
@@ -84,6 +88,10 @@ export interface ReceiptInput {
   sensitive?: boolean;
   spiCat?: string[];
   jurisdiction?: string;
+  /** Put in the receipt so a person who holds only the receipt can tell which consent and which notice text it covers. */
+  consentId?: string;
+  noticeId?: string;
+  noticeSha256?: string;
 }
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -91,6 +99,7 @@ const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TEL = /^tel:\+[0-9][0-9.()-]{3,30}$/;
 const LANG = /^[a-z]{2}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 function fail(field: string, why: string): never {
   throw new ReceiptError(`${field}: ${why}`);
@@ -185,6 +194,15 @@ export function validateClaims(value: unknown): KantaraReceiptClaims {
     str("services.service", s.service);
     arrayOfObjects("services.purposes", s.purposes).forEach(checkPurpose);
   }
+  if (value.saralConsentId !== undefined && (typeof value.saralConsentId !== "string" || !UUID_ANY.test(value.saralConsentId))) {
+    fail("saralConsentId", "must be a lowercase UUID");
+  }
+  if (value.saralNoticeId !== undefined && (typeof value.saralNoticeId !== "string" || !UUID_ANY.test(value.saralNoticeId))) {
+    fail("saralNoticeId", "must be a lowercase UUID");
+  }
+  if (value.saralNoticeSha256 !== undefined && (typeof value.saralNoticeSha256 !== "string" || !SHA256_HEX.test(value.saralNoticeSha256))) {
+    fail("saralNoticeSha256", "must be 64 lowercase hex characters");
+  }
   const sensitive = bool("sensitive", value.sensitive);
   const spiCat = strings("spiCat", value.spiCat, false);
   if (sensitive && spiCat.length === 0) fail("spiCat", "must list categories when sensitive is true");
@@ -211,6 +229,9 @@ export function buildReceiptClaims(input: ReceiptInput, now: Date = new Date()):
     sensitive: input.sensitive ?? false,
     spiCat: [...(input.spiCat ?? [])],
     iat,
+    ...(input.consentId !== undefined ? { saralConsentId: input.consentId } : {}),
+    ...(input.noticeId !== undefined ? { saralNoticeId: input.noticeId } : {}),
+    ...(input.noticeSha256 !== undefined ? { saralNoticeSha256: input.noticeSha256 } : {}),
   };
   return validateClaims(claims);
 }
