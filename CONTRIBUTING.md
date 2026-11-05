@@ -18,7 +18,7 @@
 
 - This repository is public. Never put secrets, private keys, cloud account IDs, real personal data, customer names, or unreleased commercial terms in code, tests, fixtures, issues, pull requests, or commit messages.
 - Test keys are generated at runtime. Test data uses obviously fake values (`example.org`, `.invalid` domains, made-up UUIDs).
-- Commits are authored and committed by `pranaav2k5`. Check with `git log --format='%an|%cn' origin/main..HEAD` before pushing.
+- Commits are authored and committed by `pranaav2k5` with the GitHub noreply address, and carry no `Co-authored-by` trailer. Before pushing, run `git log --format='%an <%ae> | %cn <%ce>' origin/main..HEAD | sort | uniq -c` (expect one line) and `git log --format=%B origin/main..HEAD | grep -ci '^co-authored-by:'` (expect 0). Do not put a personal email address in git config for this repository.
 
 ## Definition of Done
 
