@@ -1,0 +1,21 @@
+{
+  "name": "@saral/sdk-js",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Saral Privacy browser consent SDK (shell)",
+  "main": "dist/saral-privacy.js",
+  "module": "dist/saral-privacy.mjs",
+  "types": "dist/saral-privacy.d.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsup",
+    "test": "pnpm run build && jest",
+    "size": "size-limit"
+  },
+  "devDependencies": {
+    "@size-limit/file": "^14.3.0",
+    "size-limit": "^14.3.0",
+    "tsup": "^9.0.0"
+  }
+}
