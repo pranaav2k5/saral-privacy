@@ -4,9 +4,9 @@
 
 1. Install Node 24 LTS (Node 22.12 or newer also works), pnpm 11 (the exact version is pinned in `package.json`), Python 3.13 with [uv](https://docs.astral.sh/uv/), Terraform 1.10 or newer, and Docker.
 2. `pnpm install`
-3. `pnpm verify` runs lint, type checks, tests, and builds for every TypeScript workspace.
+3. Start the database (step 5), then `pnpm verify` runs lint, type checks, tests, and builds for every TypeScript workspace.
 4. For the ML service: `cd apps/ml && uv sync && uv run pytest`.
-5. Local database: `pnpm db:up` (PostgreSQL 16 on 127.0.0.1:5432) and `pnpm db:down`. Copy `.env.example` to `.env` if you need local environment variables.
+5. Local database: `pnpm db:up` (PostgreSQL 16 on 127.0.0.1:5432) and `pnpm db:down`. The API tests run the migrations against it, so start it and run `export DATABASE_URL=postgres://saral:saral_dev@localhost:5432/saral` (the dev-only value from `.env.example`) **before** `pnpm verify`; without it those tests fail on purpose. They create and drop their own throwaway databases and never touch the `saral` database. Apply the migrations to a database with `pnpm --filter @saral/api db:migrate`.
 
 ## Workflow
 
