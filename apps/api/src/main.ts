@@ -1,6 +1,5 @@
 import "reflect-metadata";
-import { NestFactory } from "@nestjs/core";
-import { AppModule } from "./app.module.js";
+import { createApp } from "./bootstrap.js";
 import { loadConfig, type AppConfig } from "./config.js";
 
 async function bootstrap(): Promise<void> {
@@ -11,7 +10,7 @@ async function bootstrap(): Promise<void> {
     console.error(error instanceof Error ? error.message : error);
     process.exit(1);
   }
-  const app = await NestFactory.create(AppModule);
+  const app = await createApp();
   await app.listen(config.port);
 }
 
