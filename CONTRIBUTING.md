@@ -2,7 +2,7 @@
 
 ## Local setup
 
-1. Install Node 24 LTS (Node 22.12 or newer also works), pnpm 11 (the exact version is pinned in `package.json`), Python 3.13 with [uv](https://docs.astral.sh/uv/), Terraform 1.10 or newer, and Docker.
+1. Install Node 24 LTS (Node 22.12 or newer also works), pnpm 11 (the exact version is pinned in `package.json`), Python 3.13 with [uv](https://docs.astral.sh/uv/), Terraform 1.10 or newer, Docker, and the `openssl` command line (the webhook client tests make a throwaway certificate).
 2. `pnpm install`
 3. Start the database (step 5), then `pnpm verify` runs lint, type checks, tests, and builds for every TypeScript workspace.
 4. For the ML service: `cd apps/ml && uv sync && uv run pytest`.
