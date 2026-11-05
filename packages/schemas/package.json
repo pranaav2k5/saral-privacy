@@ -10,5 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
     "build": "tsc -p tsconfig.build.json"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

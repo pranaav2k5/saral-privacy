@@ -47,6 +47,15 @@ importers:
       '@nestjs/platform-express':
         specifier: ^12.3.3
         version: 12.3.3(@nestjs/common@12.3.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.3.3)
+      '@saral/audit-chain':
+        specifier: workspace:*
+        version: link:../../packages/audit-chain
+      '@saral/receipts':
+        specifier: workspace:*
+        version: link:../../packages/receipts
+      '@saral/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -60,12 +69,6 @@ importers:
       '@nestjs/testing':
         specifier: ^12.3.3
         version: 12.3.3(@nestjs/common@12.3.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.3.3)(@nestjs/platform-express@12.3.3)
-      '@saral/audit-chain':
-        specifier: workspace:*
-        version: link:../../packages/audit-chain
-      '@saral/schemas':
-        specifier: workspace:*
-        version: link:../../packages/schemas
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -78,6 +81,9 @@ importers:
       supertest:
         specifier: ^7.3.1
         version: 7.3.1
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
 
   apps/site:
     dependencies:
@@ -250,7 +256,7 @@ importers:
         version: 14.3.0
       tsup:
         specifier: ^9.0.0
-        version: 9.0.0(jiti@2.7.0)(postcss@8.5.23)(typescript@6.0.3)
+        version: 9.0.0(jiti@2.7.0)(postcss@8.5.23)(typescript@6.0.3)(yaml@2.9.1)
 
 packages:
 
@@ -4382,6 +4388,11 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
@@ -8194,12 +8205,13 @@ snapshots:
 
   possible-typed-array-names@1.1.0: {}
 
-  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.23):
+  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.23)(yaml@2.9.1):
     dependencies:
       lilconfig: 3.1.4
     optionalDependencies:
       jiti: 2.7.0
       postcss: 8.5.23
+      yaml: 2.9.1
 
   postcss@8.5.23:
     dependencies:
@@ -8800,7 +8812,7 @@ snapshots:
 
   tslib@2.9.1: {}
 
-  tsup@9.0.0(jiti@2.7.0)(postcss@8.5.23)(typescript@6.0.3):
+  tsup@9.0.0(jiti@2.7.0)(postcss@8.5.23)(typescript@6.0.3)(yaml@2.9.1):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.28.2)
       cac: 7.1.0
@@ -8811,7 +8823,7 @@ snapshots:
       joycon: 3.1.1
       obug: 3.0.0
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.23)
+      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.23)(yaml@2.9.1)
       resolve-from: 5.0.0
       rollup: 4.67.5
       source-map-js: 1.2.2
@@ -9070,6 +9082,8 @@ snapshots:
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
+
+  yaml@2.9.1: {}
 
   yargs-parser@21.1.1: {}
 
