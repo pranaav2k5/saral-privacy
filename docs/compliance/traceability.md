@@ -11,3 +11,4 @@ Maps each DPDP requirement to the feature that implements it and the tests that 
 | Rule 10 | Verifiable parental consent for children | Age gate in the SDK from MVP, DigiLocker later | TC-CHD-001 | not started |
 | Rule 14 | Data-principal rights interface and contact | DSR endpoints and wallet | TC-DSR-001 to 010 | not started |
 | Kantara KI-CR-v1.1.0 (our chosen receipt format, not a DPDP rule) | Signed, verifiable consent receipt | Receipts library, JWKS (`packages/receipts`, threat model 0002) | `packages/receipts/src/*.test.ts` (69 tests) | library built and tested; API route, KMS signer and public verifier not built |
+| Rule 6 (reasonable security safeguards, as cited) | Tenant isolation, immutable audit table | Row-level security and audit table protections (`apps/api/db/migrations`, threat model 0003, ADR 0003) | `apps/api/test/db/*.test.ts` (55 tests, against PostgreSQL 16) | schema built and tested; the API's per-request tenant handling is not built |
