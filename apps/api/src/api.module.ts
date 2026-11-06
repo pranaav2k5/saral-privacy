@@ -22,6 +22,7 @@ import { systemResolver } from "./webhooks/url-guard.js";
 import { WebhookEndpointsController } from "./webhooks/webhook-endpoints.controller.js";
 import { WebhookService } from "./webhooks/webhook.service.js";
 import { WebhookWorker } from "./webhooks/worker.js";
+import { NoticeService } from "./notices/notice.service.js";
 
 @Module({
   controllers: [AuthController, DsrController, ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
@@ -32,6 +33,7 @@ import { WebhookWorker } from "./webhooks/worker.js";
     AuditService,
     PrincipalService,
     ConsentService,
+    NoticeService,
     DsrService,
     StaffService,
     WebhookService,
