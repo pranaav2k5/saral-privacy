@@ -4,12 +4,15 @@ A DPDP-native consent and privacy operations platform for Indian small and mid-s
 
 Status: **early build**. The plan is approved (its open decisions are still to be answered). Built and tested so far: the canonical string contract, the audit hash chain with Merkle anchors, signed consent receipts with a JWKS, and the free notice generator at `/notice-generator` in `apps/site` (English and Hindi drafts, pending legal and native-speaker review). The database schema with row-level security and the consent API (grant, withdraw, receipt, JWKS, audit verification; contract in `docs/design/openapi.yaml`) are built too. Signed, retried webhooks and the browser consent SDK (`packages/sdk-js`, 6 kB gzipped) are built too. Not built yet: rights handling (DSR), staff login with MFA, and the dashboard. See `docs/PLAN.md` for the schedule.
 
+Read `docs/design/HLD.md` for the architecture and `docs/design/openapi.yaml` for the API.
+
 Key date: the Digital Personal Data Protection Act's full compliance deadline is **13 May 2027**.
 
 ## Read in this order
 
 1. [`docs/PLAN.md`](docs/PLAN.md): the master plan. Scope, reconciled decisions, architecture, 16-week calendar, go-to-market, risks, roadmap, open decisions.
 2. [`docs/RESEARCH.md`](docs/RESEARCH.md): what was verified, what was found wrong in the source documents, and what is still unverified.
+3. [`docs/design/HLD.md`](docs/design/HLD.md) and [`docs/design/LLD.md`](docs/design/LLD.md): the architecture and the module detail as built, plus the designed-but-unbuilt parts. [`docs/design/openapi.yaml`](docs/design/openapi.yaml) is the API contract.
 
 ## Getting started
 
