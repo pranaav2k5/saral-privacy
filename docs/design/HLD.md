@@ -10,7 +10,7 @@ A data fiduciary (the tenant) wants to collect consent from people under the Dig
 2. A **browser SDK** that shows a granular, default-off consent dialog and lets people withdraw as easily as they agreed.
 3. An **API** that records each consent, issues a **signed receipt** (Kantara KI-CR-v1.1.0 as an RS256 JWT, verifiable with a public JWKS), and appends to a **tamper-evident audit log** (HMAC hash chain with a daily Merkle anchor).
 4. **Webhooks** that tell the tenant's systems about consents and withdrawals.
-5. **Data-principal rights handling** (requests, a DPO queue, erasure) and, designed but not built, a DPO dashboard and staff login with MFA.
+5. **Data-principal rights handling** (requests, a DPO queue, erasure), a staff dashboard, and staff login with MFA.
 
 The product does not claim legal compliance. It provides tooling; counsel for the tenant stays responsible (`CONTRIBUTING.md`).
 
@@ -61,7 +61,7 @@ flowchart LR
 | KMS key provider | not built | no | The development provider derives keys from one secret and refuses production. |
 | Rights requests (DSR) | `apps/api/src/dsr` | yes | State machine, SLA due dates, DPO queue, sealed contacts, erasure. See LLD section 9. |
 | Staff login with MFA | `apps/api/src/staff` | yes | Password, authenticator code, recovery codes, session tokens. See LLD section 10 and ADR 0004. |
-| DPO dashboard | designed | no | See LLD section 11. `apps/web` is a shell. |
+| Staff dashboard | `apps/web` | yes | Sign-in with MFA, overview, rights-request queue, audit page, integrations. See LLD section 11 and threat model 0009. Notices, consent search and a funnel are not built. |
 | ML service | `apps/ml` | shell | Health endpoint only. Translation is done offline (decision D10). |
 
 ## 4. Key flows
@@ -135,4 +135,4 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 - No rate limiting; no circuit breaker for failing webhook endpoints.
 - No nightly anchor job, no KMS provider, no deployment.
 - Hindi text is an unreviewed draft; the four further languages are not started.
-- The dashboard is designed only, and there is no tool or flow to create staff accounts, reset a password or reset an authenticator.
+- There is no tool or flow to create staff accounts, reset a password or reset an authenticator, and the dashboard has no content security policy for scripts (threat model 0009).

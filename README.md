@@ -2,7 +2,7 @@
 
 A DPDP-native consent and privacy operations platform for Indian small and mid-sized businesses. Notice generation in Indian languages, consent capture with signed receipts, data-principal rights handling, records of processing, breach workflow, and a tamper-evident audit log.
 
-Status: **early build**. The plan is approved (its open decisions are still to be answered). Built and tested so far: the canonical string contract, the audit hash chain with Merkle anchors, signed consent receipts with a JWKS, and the free notice generator at `/notice-generator` in `apps/site` (English and Hindi drafts, pending legal and native-speaker review). The database schema with row-level security and the consent API (grant, withdraw, receipt, JWKS, audit verification; contract in `docs/design/openapi.yaml`) are built too. Signed, retried webhooks and the browser consent SDK (`packages/sdk-js`, 6 kB gzipped) are built too. Data-principal rights requests (queue, state machine, erasure) are built too. Staff login with MFA (password, authenticator code, recovery codes, sessions) is built too. Not built yet: the dashboard. See `docs/PLAN.md` for the schedule.
+Status: **early build**. The plan is approved (its open decisions are still to be answered). Built and tested so far: the canonical string contract, the audit hash chain with Merkle anchors, signed consent receipts with a JWKS, and the free notice generator at `/notice-generator` in `apps/site` (English and Hindi drafts, pending legal and native-speaker review). The database schema with row-level security and the consent API (grant, withdraw, receipt, JWKS, audit verification; contract in `docs/design/openapi.yaml`) are built too. Signed, retried webhooks and the browser consent SDK (`packages/sdk-js`, 6 kB gzipped) are built too. Data-principal rights requests (queue, state machine, erasure) are built too. Staff login with MFA (password, authenticator code, recovery codes, sessions) is built too. The staff dashboard (`apps/web`: sign-in with MFA, overview, the rights-request queue, audit verification and webhook integrations) is built too. Not built yet: notice publishing and consent search screens, the nightly anchor job, KMS adapters and deployment. See `docs/PLAN.md` for the schedule.
 
 Read `docs/design/HLD.md` for the architecture and `docs/design/openapi.yaml` for the API.
 
@@ -30,7 +30,7 @@ Local ports: web 3000, wallet 3001, site 3002, api 4000, ml 8000, postgres 5432.
 ## Layout
 
 - `apps/api`: NestJS control plane. `apps/ml`: FastAPI ML service.
-- `apps/web`, `apps/wallet`, `apps/site`: Next.js dashboard, consumer wallet, and marketing site with the free notice tool.
+- `apps/web`, `apps/wallet`, `apps/site`: Next.js staff dashboard (built), consumer wallet (a shell), and marketing site with the free notice tool.
 - `packages/schemas`: versioned schema constants and the frozen canonical strings. `packages/audit-chain`: hash chain, Merkle tree, anchors. `packages/receipts`: Kantara consent receipts as signed JWTs. `packages/notice`: privacy notice engine. `packages/sdk-js`: browser consent SDK (25 kB gzipped budget). `packages/verifier`: command-line verifier, README only for now.
 - `infra/terraform`: AWS modules and environment stacks.
 - `docs/`: plan, research log, ADRs, threat models, compliance matrix.
