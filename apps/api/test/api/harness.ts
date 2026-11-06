@@ -2,6 +2,7 @@ import type { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 import { AppModule } from "../../src/app.module.js";
+import { configureApp } from "../../src/bootstrap.js";
 import { issueApiKey } from "../../src/auth/api-keys.js";
 import { KEY_PROVIDER, type KeyProvider } from "../../src/keys/key-provider.js";
 import { SETTINGS, type Settings } from "../../src/settings.js";
@@ -91,7 +92,7 @@ export interface Api {
   A: Tenant;
   B: Tenant;
   http: () => ReturnType<typeof request>;
-  grant: (tenant: Tenant, body?: Record<string, unknown>) => Promise<request.Response>;
+  grant: (tenant: Tenant, body?: Record<string, unknown>, headers?: Record<string, string>) => Promise<request.Response>;
   stop: () => Promise<void>;
 }
 
@@ -105,6 +106,7 @@ export async function startApi(): Promise<Api> {
     .overrideProvider(URL_RESOLVER).useValue(fakeResolver)
     .compile();
   const app = moduleRef.createNestApplication();
+  configureApp(app);
   // Listen once on an ephemeral port: supertest then reuses the server instead of adding a listener per request.
   await app.listen(0, "127.0.0.1");
   const keys = app.get<KeyProvider>(KEY_PROVIDER);
@@ -133,10 +135,11 @@ export async function startApi(): Promise<Api> {
   const A = await tenant(TENANT_A, "a", "tenant-a");
   const B = await tenant(TENANT_B, "b", "tenant-b");
   const http = () => request(app.getHttpServer());
-  const grant = (t: Tenant, body: Record<string, unknown> = {}) =>
+  const grant = (t: Tenant, body: Record<string, unknown> = {}, headers: Record<string, string> = {}) =>
     http()
       .post("/v1/consents")
       .set("Authorization", `Bearer ${t.pk}`)
+      .set(headers)
       .send({
         noticeId: t.noticeId,
         identifier: PHONE,

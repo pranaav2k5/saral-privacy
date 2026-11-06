@@ -10,6 +10,9 @@ info:
 
     Failures to authenticate all return the same 401 body. A request for another tenant's data returns 404, never 403.
 
+    Browsers may call the API: CORS reflects the caller's origin and never allows cookies. This is not authorisation;
+    the key, its scopes and its origin list are checked on every request.
+
     Rate limits are not built yet.
 servers:
   - url: http://localhost:4000
