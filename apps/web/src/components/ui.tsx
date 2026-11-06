@@ -69,3 +69,15 @@ export function Field({
     </div>
   );
 }
+
+export function TextArea({ label, value, onChange, hint, rows = 3 }: { label: string; value: string; onChange: (v: string) => void; hint?: string; rows?: number }) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="font-medium">{label}</label>
+      {hint && <p id={hintId} className="text-sm text-ink-soft">{hint}</p>}
+      <textarea id={id} aria-describedby={hint ? hintId : undefined} rows={rows} value={value} onChange={(e) => onChange(e.target.value)} className="rounded border border-field bg-sheet px-3 py-2" />
+    </div>
+  );
+}

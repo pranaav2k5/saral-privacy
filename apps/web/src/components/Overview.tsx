@@ -68,17 +68,31 @@ function OfficerOverview() {
 
 function AdminOverview() {
   const { api } = useSession();
-  const load = useCallback(() => api.listEndpoints(), [api]);
-  const list = useLoad(load);
-  if (list.status === "loading") return <p role="status">Loading…</p>;
-  if (list.status === "error") return <Failed message={list.error} retry={list.retry} />;
+  const loadEndpoints = useCallback(() => api.listEndpoints(), [api]);
+  const loadNotices = useCallback(() => api.listNotices(), [api]);
+  const endpoints = useLoad(loadEndpoints);
+  const notices = useLoad(loadNotices);
+  const retry = () => {
+    endpoints.retry();
+    notices.retry();
+  };
+  const failed = endpoints.status === "error" ? endpoints.error : notices.status === "error" ? notices.error : null;
+  if (failed !== null) return <Failed message={failed} retry={retry} />;
+  if (endpoints.status !== "ready" || notices.status !== "ready") return <p role="status">Loading…</p>;
   return (
     <>
+      {notices.data.length === 0 && (
+        <p role="status" className="rounded border border-soon-fg bg-soon-bg px-3 py-2 text-soon-fg">No notice has been published yet. Nobody can give consent until you publish one.</p>
+      )}
       <dl className="grid gap-3 sm:grid-cols-3">
-        <Stat label="Active endpoints" value={list.data.filter((e) => e.disabledAt === null).length} />
+        <Stat label="Published notices" value={notices.data.length} />
+        <Stat label="Active endpoints" value={endpoints.data.filter((e) => e.disabledAt === null).length} />
       </dl>
       <p className="text-ink-soft">Rights requests are handled by your data protection officer.</p>
-      {goTo("/integrations", "Go to integrations")}
+      <div className="flex flex-wrap gap-x-6">
+        {goTo("/notices", "Go to notices")}
+        {goTo("/integrations", "Go to integrations")}
+      </div>
     </>
   );
 }
