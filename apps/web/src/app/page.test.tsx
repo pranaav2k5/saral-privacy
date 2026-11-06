@@ -1,8 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import Home from "./page";
+import { renderScreen } from "@/test/harness";
 
-test("home page renders the dashboard heading", () => {
-  render(<Home />);
+jest.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
-  expect(screen.getByRole("heading", { name: "Saral Privacy Dashboard" })).toBeTruthy();
+test("the home page is the Overview, for a signed-in officer", async () => {
+  renderScreen(<Home />, { role: "dpo", routes: { "GET /v1/dsr": { body: [] } } });
+  expect(screen.getByRole("heading", { name: "Overview" })).toBeTruthy();
+  expect(await screen.findByText("Open requests")).toBeTruthy();
 });

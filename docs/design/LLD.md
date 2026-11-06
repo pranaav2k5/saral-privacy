@@ -151,10 +151,26 @@ Decisions and parameters are in `docs/adr/0004-staff-authentication.md`; threats
 - Audit: `staff.logged_in`, `staff.mfa_enrolled`, `staff.locked`; later actions carry `staff:<id>` as the actor. `AuthContext.actor` replaced the key id as the audit actor everywhere.
 - Operators create accounts with `createStaffUser` (`src/staff/staff-admin.ts`). There is no command-line tool and no password or authenticator reset yet.
 
-## 11. Dashboard (designed, not built)
+## 11. Dashboard (built, core screens)
 
-`apps/web`, reusing the design tokens and system-font approach of `apps/site` (light theme, WCAG AA contrast, no third-party requests). Screens: sign-in with MFA; overview (consent funnel and audit health from `/v1/audit/verify`); notices (list, publish); consent search; DSR queue with SLA badges and the transition actions; verifier panel. Each screen has loading, empty, error and success states and works by keyboard alone. The API client is typed from `docs/design/openapi.yaml`.
+`apps/web` is a Next.js app with one client boundary (`src/app/providers.tsx`): the session provider, the sign-in gate and the navigation around every page. It reuses the system-font approach of `apps/site` (light theme, no third-party requests). The palette is in `src/lib/tokens.ts` and `src/app/globals.css`; a test checks every text and control pair against WCAG AA (4.5 to 1 for text, 3 to 1 for field borders and focus rings) and that each colour appears in the stylesheet.
+
+**Screens.**
+
+- Sign-in: organisation, email and password, then the authenticator code. A first sign-in shows the setup key and then the recovery codes once; the session starts only after the person confirms they saved them. A wrong code can be retried without starting over, and the password is cleared as soon as it has been sent.
+- Overview: for the officer, the number of open, overdue and soon-due requests and a plain-words alert when any are overdue; for the administrator, the number of active webhook endpoints.
+- Requests (officer): the queue with a status filter and an overdue-only filter, each row with a text deadline badge ("Overdue by 2 days", "Due in 22 days", "Finished") so colour is never the only signal; a detail panel with what the person wrote, a button that reveals the contact (the screen says this is recorded in the audit log), and the legal next steps from the same table as the API (a test reads `apps/api/src/dsr/state.ts` and fails if they differ). Rejecting needs a reason; fulfilling and closing ask for a second click.
+- Audit (both roles): verify the whole chain or one UTC day (a one-day result says that only that day was checked), with failures named by entry number and explained in words, and fetch a daily anchor with advice to keep a copy outside Saral.
+- Integrations (administrator): list, add (https only, at least one event), rotate secret and disable, with the signing secret shown once and never stored.
+
+**Session.** The token lives in `sessionStorage` (this tab only). It is renewed on the next API call when fewer than two minutes remain of its 15, so an idle tab expires and an active one is bounded by the server's eight-hour limit. A 401 on any call signs the tab out with an explanation, but only if the call was made with the session that is current: a late 401 for an older token, or a renewal that finishes after the person signed out, changes nothing. If the browser refuses to store the session, it is kept in memory for as long as the page stays open. Requests are sent with `cache: "no-store"` so answers are not kept in the browser's HTTP cache. The store uses `useSyncExternalStore` with a "loading" server snapshot, so the prerendered HTML never contains the sign-in form or any data. The API client is a small typed class (`src/lib/api.ts`) that always sends `credentials: "omit"`, turns network failures and replies that cannot be read into plain messages, and encodes every path segment.
+
+**Every data screen** has loading, empty, failure (with Try again) and success states, uses real buttons, labels and landmarks, has a skip link, and works by keyboard alone; opening a request moves focus to its heading, and a step that replaces the control that had focus (a confirmation, the code field, the recovery codes, a one-time secret) moves focus to the new content. If the server refuses a move because someone else already moved the request, the panel and the queue are reloaded. Replies to an earlier choice are dropped so a slow answer cannot replace a newer one.
+
+**Configuration.** `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:4000`). Pages are sent with a content security policy that blocks framing, other form targets, a changed base address and plugins (`src/lib/security-headers.ts`). It does not restrict scripts yet; see threat model 0009.
+
+**Not built.** Notice list and publish, consent search, a consent funnel, and a verifier panel. The API client is hand-written to match `docs/design/openapi.yaml`, not generated from it.
 
 ## 12. Tests
 
-`pnpm verify` runs lint, type checks, every test and every build. The API tests need PostgreSQL 16 (`pnpm db:up` and `DATABASE_URL`); they create throwaway databases, run as `saral_app`, and fail rather than skip without a database. Counts on this branch: schemas 47, audit-chain 67, receipts 76, notice 43, site 15, sdk-js 59, API 371. Mutation checks (a manual edit of the code that must make a test fail) are recorded in each pull request.
+`pnpm verify` runs lint, type checks, every test and every build. The API tests need PostgreSQL 16 (`pnpm db:up` and `DATABASE_URL`); they create throwaway databases, run as `saral_app`, and fail rather than skip without a database. Counts on this branch: schemas 47, audit-chain 67, receipts 76, notice 43, site 15, sdk-js 59, API 524, web 145. Mutation checks (a manual edit of the code that must make a test fail) are recorded in each pull request.

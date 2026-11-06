@@ -26,6 +26,17 @@ describe("CORS for the browser SDK", () => {
     expect(res.headers["access-control-max-age"]).toBeDefined();
   });
 
+  test("a preflight for DELETE is allowed, because the dashboard disables webhook endpoints that way", async () => {
+    const res = await api
+      .http()
+      .options("/v1/webhook-endpoints/00000000-0000-4000-8000-000000000000")
+      .set("Origin", ORIGIN)
+      .set("Access-Control-Request-Method", "DELETE")
+      .set("Access-Control-Request-Headers", "authorization");
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-methods"]).toMatch(/DELETE/);
+  });
+
   test("cookies are never allowed: authentication is by key only", async () => {
     const res = await api.http().options("/v1/consents").set("Origin", ORIGIN).set("Access-Control-Request-Method", "POST");
     expect(res.headers["access-control-allow-credentials"]).toBeUndefined();
