@@ -6,6 +6,9 @@ import { AuthGuard } from "./auth/auth.guard.js";
 import { ConsentsController } from "./consent/consent.controller.js";
 import { ConsentService } from "./consent/consent.service.js";
 import { Database } from "./db/database.js";
+import { DsrController } from "./dsr/dsr.controller.js";
+import { DsrService } from "./dsr/dsr.service.js";
+import { PrincipalService } from "./principals/principal.service.js";
 import { KEY_PROVIDER, createKeyProvider } from "./keys/key-provider.js";
 import { NoticesController } from "./notices/notices.controller.js";
 import { SETTINGS, readSettings, type Settings } from "./settings.js";
@@ -19,13 +22,15 @@ import { WebhookService } from "./webhooks/webhook.service.js";
 import { WebhookWorker } from "./webhooks/worker.js";
 
 @Module({
-  controllers: [ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
+  controllers: [DsrController, ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
   providers: [
     { provide: SETTINGS, useFactory: () => readSettings(process.env) },
     { provide: KEY_PROVIDER, useFactory: (settings: Settings) => createKeyProvider(settings), inject: [SETTINGS] },
     Database,
     AuditService,
+    PrincipalService,
     ConsentService,
+    DsrService,
     WebhookService,
     WebhookWorker,
     WebhookRunner,

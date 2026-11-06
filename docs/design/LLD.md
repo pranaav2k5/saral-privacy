@@ -83,7 +83,7 @@ Read tenant profile and notice; map the request's purposes (sorted by key) to th
 
 Registration (`tenant_admin`): URL rules and SSRF checks (`url-guard.ts`), at most 10 active endpoints per tenant counted under the tenant lock, an audit entry, and the secret `whsec_<base64url>` shown once. `DELETE /v1/webhook-endpoints/{id}` disables an endpoint (frees its slot; the worker closes events still waiting for it) and `POST .../rotate-secret` bumps `secret_version` and shows the new secret once; both are audit events. The secret is `HMAC(webhookKey, "<endpointId>:<secretVersion>")`; nothing is stored. Delivery: see HLD 4.4; every run first sweeps rows that can never be sent (15 attempts left by a crashed worker, disabled endpoints). Header `X-Saral-Signature: t=<unix>,v1=<HMAC-SHA256 of "<t>.<body>">`. Body `{ id, type, createdAt, data }` with ids and states only.
 
-## 7. Database (migrations 0001 to 0005)
+## 7. Database (migrations 0001 to 0006)
 
 | Table | Notes |
 |---|---|
@@ -116,15 +116,16 @@ stateDiagram-v2
 
 SDK: `closed`, `banner`, `manage`. First visit opens `banner`. A decision (`granted` or `refused`) is stored; with `granted`, the opener shows `manage`, where withdrawal clears the state.
 
-## 9. Data-principal rights (designed, not built)
+## 9. Data-principal rights (built)
 
-States: `submitted`, `identity_pending`, `in_review`, `fulfilled`, `rejected`, `closed`. Types: `access`, `correction`, `erasure`, `nomination`, `grievance`.
+States: `submitted`, `identity_pending`, `in_review`, `fulfilled`, `rejected`, `closed`. Types: `access`, `correction`, `erasure`, `nomination`, `grievance`. The state machine is in `apps/api/src/dsr/state.ts` and is enforced again by a database trigger; a test compares all 36 state pairs between the two.
 
 ```mermaid
 stateDiagram-v2
   [*] --> submitted
   submitted --> identity_pending: DPO asks for proof of identity
   submitted --> in_review: identity already established
+  submitted --> rejected: with a stated reason
   identity_pending --> in_review: identity confirmed
   identity_pending --> rejected: identity not confirmed
   in_review --> fulfilled
@@ -133,10 +134,12 @@ stateDiagram-v2
   rejected --> closed
 ```
 
-- Table `dsr_requests` (tenant, principal pseudonym, type, state, submitted at, due at, actor of each transition) with row-level security and a guard trigger that allows only the transitions above.
-- `slaDueAt(submittedAt, type)` returns 30 days as a working default, **unverified against the Rules**; the lawyer advisor must confirm before it is shown to customers.
-- Routes: `POST /v1/dsr` (`sdk`, with the identifier), `GET /v1/dsr` and `POST /v1/dsr/{id}/transition` (`dpo`). Every transition appends an audit entry and queues a webhook (`dsr.submitted`, `dsr.fulfilled`, ...). The `dpo` scope needs a credential: until staff login exists, a secret key with the `dpo` scope.
-- Erasure: delete the identifier-to-pseudonym mapping (an encrypted contact table, not built) and keep the audit chain intact. This needs a lawyer's opinion (`docs/PLAN.md` section 5.2).
+- Tables (migration 0006): `dsr_requests` (row-level security; the API role may update only `state`, `decided_reason` and `closed_at`), `principal_contacts` (the person's contact sealed with AES-256-GCM, `src/crypto/contact-crypto.ts`: version byte, 12-byte nonce, ciphertext, tag; bound to tenant and person as associated data). Webhook events `dsr.submitted` and `dsr.transitioned` (ids and states only).
+- `slaDueAt(submittedAt, type)` is 30 days for every type, a working default **not confirmed against the Rules**.
+- Routes: `POST /v1/dsr` (`sdk`; same answer for known and unknown people), `GET /v1/dsr` with `state` and `overdue` filters, `GET /v1/dsr/{id}`, `POST /v1/dsr/{id}/transition` (409 with the allowed moves; a rejection needs a reason), `POST /v1/dsr/{id}/reveal-contact` (410 after erasure). All but the first need the `dpo` scope, which is a secret API key until staff login exists.
+- Every submission, move and contact read is an audit entry (`dsr.submitted`, `dsr.transitioned`, `dsr.contact_revealed`) with a hash of the request's state and reason.
+- Fulfilling an **erasure** request runs, in the same transaction as the move: withdraw all of the person's granted consents (each audited and queued), delete the sealed contact, replace `tenant_principals.pseudonym_hmac` with a random value so the identifier no longer leads to the person. The audit chain keeps its entries and still verifies. The lawyer advisor must confirm that this satisfies the Act (`docs/PLAN.md` section 5.2).
+- Threat model: `docs/threat-model/0007-rights-requests.md`.
 
 ## 10. Staff login with MFA (designed, not built)
 

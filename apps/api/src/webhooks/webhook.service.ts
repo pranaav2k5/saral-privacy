@@ -9,8 +9,8 @@ import { endpointSecret, formatSecret } from "./signature.js";
 import { URL_RESOLVER } from "./tokens.js";
 import { WebhookUrlError, assertWebhookUrl, type Resolver } from "./url-guard.js";
 
-export type WebhookEvent = "consent.granted" | "consent.withdrawn";
-export const WEBHOOK_EVENTS: readonly WebhookEvent[] = ["consent.granted", "consent.withdrawn"];
+export type WebhookEvent = "consent.granted" | "consent.withdrawn" | "dsr.submitted" | "dsr.transitioned";
+export const WEBHOOK_EVENTS: readonly WebhookEvent[] = ["consent.granted", "consent.withdrawn", "dsr.submitted", "dsr.transitioned"];
 const MAX_ENDPOINTS = 10;
 
 export interface EndpointView {

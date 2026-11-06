@@ -15,6 +15,8 @@ export interface KeyProvider {
   apiKeyPepper(): Uint8Array;
   /** Key that webhook signing secrets are derived from. */
   webhookKey(): Uint8Array;
+  /** AES-256-GCM key that seals people's contact details at rest. */
+  contactKey(): Uint8Array;
   receiptSigner(): ReceiptSigner;
   jwks(): { keys: JwkPublic[] };
 }
@@ -43,6 +45,7 @@ export async function createDevKeyProvider(masterSecret: string | undefined, nod
   const pseudonym = derive(master, "pseudonym-v1");
   const pepper = derive(master, "api-key-pepper-v1");
   const webhook = derive(master, "webhook-secret-v1");
+  const contact = derive(master, "contact-seal-v1");
   const { signer, publicJwk } = await createLocalSigner();
   const jwks = buildJwks([publicJwk]);
   return {
@@ -51,6 +54,7 @@ export async function createDevKeyProvider(masterSecret: string | undefined, nod
     pseudonymKey: () => pseudonym,
     apiKeyPepper: () => pepper,
     webhookKey: () => webhook,
+    contactKey: () => contact,
     receiptSigner: () => signer,
     jwks: () => jwks,
   };
@@ -67,6 +71,7 @@ const UNAVAILABLE: KeyProvider = {
   pseudonymKey: unavailable,
   apiKeyPepper: unavailable,
   webhookKey: unavailable,
+  contactKey: unavailable,
   receiptSigner: unavailable,
   jwks: unavailable,
 };
