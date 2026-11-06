@@ -40,7 +40,7 @@ export class ConsentsController {
       seen.add(key);
       return { key, granted: boolField(o.granted, `purposes[${String(i)}].granted`) };
     });
-    const { reused, ...result } = await this.consents.grant(auth.tenantId, { noticeId, identifier, purposes, keyKind: auth.kind, ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) });
+    const { reused, ...result } = await this.consents.grant(auth.tenantId, { noticeId, identifier, purposes, keyKind: auth.kind === "session" ? "secret" : auth.kind, ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) });
     if (reused) res.status(200);
     return { ...result, status: "granted" as const };
   }

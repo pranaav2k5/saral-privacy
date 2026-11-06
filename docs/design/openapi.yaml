@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   summary: Consent capture, signed receipts, and the audit log.
   description: |
-    Authentication: send an API key as `Authorization: Bearer <key>`. A publishable key (`pk_...`, scope `sdk`) is safe
+    Authentication: send an API key, or a staff session token from `/v1/auth/mfa/verify`, as `Authorization: Bearer <...>`. A publishable key (`pk_...`, scope `sdk`) is safe
     to ship in a browser and may be restricted to origins. A secret key (`sk_...`) carries one or more of the scopes
     `tenant_admin`, `dpo` and `auditor` and must stay on a server. Every request is limited to the key's tenant.
 
@@ -24,6 +24,7 @@ tags:
   - name: Keys
   - name: Webhooks
   - name: Rights requests
+  - name: Staff sign-in
   - name: Operations
 paths:
   /healthz:
@@ -474,6 +475,152 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/auth/login:
+    post:
+      tags: [Staff sign-in]
+      operationId: staffLogin
+      summary: "Step one of signing in: the password"
+      description: >-
+        Returns a short-lived (5 minute) **challenge**, never a session. `mfa` says whether the person must set up an
+        authenticator (`enroll`) or has one (`verify`). An unknown organisation, an unknown email, a wrong password, a
+        disabled person and a locked account all give exactly the same 401, and take about the same time. Five wrong passwords
+        or codes lock the account for 15 minutes (and that is an audit event). Staff accounts are created by operators.
+      x-access: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant, email, password]
+              properties:
+                tenant:
+                  type: string
+                  description: "The organisation's short name (its slug)."
+                  pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+                email: { type: string }
+                password: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Password accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, mfa]
+                properties:
+                  challenge: { type: string }
+                  mfa: { enum: [enroll, verify] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/mfa/enroll:
+    post:
+      tags: [Staff sign-in]
+      operationId: staffEnrollMfa
+      summary: "First time only: a new authenticator secret to scan"
+      description: The secret is not trusted until a code from it is accepted by `mfa/verify`. 409 if an authenticator is already set up.
+      x-access: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge]
+              properties:
+                challenge: { type: string }
+      responses:
+        "200":
+          description: The secret, and the link an authenticator app scans as a QR code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, otpauthUrl]
+                properties:
+                  secret: { type: string, description: Base32. }
+                  otpauthUrl: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: An authenticator is already set up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/auth/mfa/verify:
+    post:
+      tags: [Staff sign-in]
+      operationId: staffVerifyMfa
+      summary: "Step two of signing in: the authenticator code or a recovery code"
+      description: >-
+        A six-digit authenticator code (one step of clock drift allowed; a code works once), or a recovery code such as
+        `abcde-fghij` (once). The first successful code confirms the authenticator and returns eight **recovery codes, shown
+        only this once**. The session lasts 15 minutes and can be refreshed until eight hours after this sign-in.
+      x-access: public
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge, code]
+              properties:
+                challenge: { type: string }
+                code: { type: string, maxLength: 20 }
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: The authenticator has not been set up yet.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/auth/refresh:
+    post:
+      tags: [Staff sign-in]
+      operationId: staffRefresh
+      summary: A new session for a still-valid one
+      description: Sessions only (an API key gets 403). Refuses once eight hours have passed since the person last signed in with a password and a code.
+      x-scopes: [tenant_admin, dpo]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: A new session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/auth/me:
+    get:
+      tags: [Staff sign-in]
+      operationId: staffMe
+      summary: Who is signed in and what they may do
+      x-scopes: [tenant_admin, dpo]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: The caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [staffId, tenantId, scopes]
+                properties:
+                  staffId: { type: string, format: uuid }
+                  email: { type: [string, "null"] }
+                  role: { enum: [tenant_admin, dpo, null] }
+                  tenantId: { type: string, format: uuid }
+                  scopes:
+                    type: array
+                    items: { enum: [sdk, tenant_admin, dpo, auditor] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/audit/verify:
     get:
       tags: [Audit]
@@ -664,6 +811,17 @@ components:
         - type: object
           properties:
             details: { type: [string, "null"] }
+    StaffSession:
+      type: object
+      required: [token, expiresAt, role]
+      properties:
+        token: { type: string, description: "A signed session token (starts with st_v1.). Send it as a bearer token." }
+        expiresAt: { type: string, format: date-time }
+        role: { enum: [tenant_admin, dpo] }
+        recoveryCodes:
+          type: array
+          description: Only on the first sign-in, shown once.
+          items: { type: string }
     Identifier:
       type: string
       description: An E.164 phone number (+919876543210) or an email address.

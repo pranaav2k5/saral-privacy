@@ -2,6 +2,7 @@ import { ForbiddenException, Inject, Injectable, UnauthorizedException, type Can
 import { Reflector } from "@nestjs/core";
 import { timingSafeEqual } from "node:crypto";
 import { Database } from "../db/database.js";
+import { StaffService } from "../staff/staff.service.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
 import { ACCESS_KEY, type AccessRule, type HttpRequest } from "./access.js";
 import { hashSecret, parseApiKey, type Scope } from "./api-keys.js";
@@ -18,6 +19,7 @@ export class AuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly db: Database,
+    private readonly staff: StaffService,
     @Inject(KEY_PROVIDER) private readonly keys: KeyProvider,
   ) {}
 
@@ -29,6 +31,16 @@ export class AuthGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<HttpRequest>();
     const header = req.headers.authorization;
     const token = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    if (token.startsWith("st_v1.")) {
+      // A staff session. A challenge (password only, no code yet) is not one: only a full sign-in makes a session token.
+      const session = await this.staff.authenticate(token);
+      if (session === undefined) throw new UnauthorizedException("invalid or expired session");
+      if (!(rule.scopes ?? []).some((s) => session.scopes.includes(s))) {
+        throw new ForbiddenException(`this session needs one of the scopes: ${(rule.scopes ?? []).join(", ")}`);
+      }
+      req.auth = session;
+      return true;
+    }
     const parsed = parseApiKey(token);
     if (parsed === null) throw new UnauthorizedException(INVALID);
 
@@ -53,7 +65,7 @@ export class AuthGuard implements CanActivate {
     if (!wanted.some((s) => row.scopes.includes(s))) {
       throw new ForbiddenException(`this key needs one of the scopes: ${wanted.join(", ")}`);
     }
-    req.auth = { keyId: parsed.id, tenantId: row.tenant_id, kind: row.kind, scopes: row.scopes };
+    req.auth = { actor: `api-key:${parsed.id}`, keyId: parsed.id, tenantId: row.tenant_id, kind: row.kind, scopes: row.scopes };
     return true;
   }
 }

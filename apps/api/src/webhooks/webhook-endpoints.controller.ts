@@ -19,7 +19,7 @@ export class WebhookEndpointsController {
     const events = body.events as unknown[];
     if (!events.every((e): e is WebhookEvent => WEBHOOK_EVENTS.includes(e as WebhookEvent))) throw bad("events", `unknown event; use: ${WEBHOOK_EVENTS.join(", ")}`);
     if (new Set(events).size !== events.length) throw bad("events", "an event is listed twice");
-    return this.webhooks.create(auth.tenantId, auth.keyId, body.url, events);
+    return this.webhooks.create(auth.tenantId, auth.actor, body.url, events);
   }
 
   @Get()
@@ -33,7 +33,7 @@ export class WebhookEndpointsController {
   @HttpCode(204)
   @Scopes("tenant_admin")
   async disable(@Auth() auth: AuthContext, @Param("id") id: string): Promise<void> {
-    await this.webhooks.disable(auth.tenantId, auth.keyId, uuidParam(id, "id"));
+    await this.webhooks.disable(auth.tenantId, auth.actor, uuidParam(id, "id"));
   }
 
   /** Issues a new signing secret, shown once. The old secret stops working at once. */
@@ -41,6 +41,6 @@ export class WebhookEndpointsController {
   @HttpCode(200)
   @Scopes("tenant_admin")
   rotate(@Auth() auth: AuthContext, @Param("id") id: string) {
-    return this.webhooks.rotate(auth.tenantId, auth.keyId, uuidParam(id, "id"));
+    return this.webhooks.rotate(auth.tenantId, auth.actor, uuidParam(id, "id"));
   }
 }

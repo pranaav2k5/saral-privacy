@@ -83,7 +83,7 @@ Read tenant profile and notice; map the request's purposes (sorted by key) to th
 
 Registration (`tenant_admin`): URL rules and SSRF checks (`url-guard.ts`), at most 10 active endpoints per tenant counted under the tenant lock, an audit entry, and the secret `whsec_<base64url>` shown once. `DELETE /v1/webhook-endpoints/{id}` disables an endpoint (frees its slot; the worker closes events still waiting for it) and `POST .../rotate-secret` bumps `secret_version` and shows the new secret once; both are audit events. The secret is `HMAC(webhookKey, "<endpointId>:<secretVersion>")`; nothing is stored. Delivery: see HLD 4.4; every run first sweeps rows that can never be sent (15 attempts left by a crashed worker, disabled endpoints). Header `X-Saral-Signature: t=<unix>,v1=<HMAC-SHA256 of "<t>.<body>">`. Body `{ id, type, createdAt, data }` with ids and states only.
 
-## 7. Database (migrations 0001 to 0006)
+## 7. Database (migrations 0001 to 0007)
 
 | Table | Notes |
 |---|---|
@@ -141,9 +141,15 @@ stateDiagram-v2
 - Fulfilling an **erasure** request runs, in the same transaction as the move: withdraw all of the person's granted consents (each audited and queued), delete the sealed contact, replace `tenant_principals.pseudonym_hmac` with a random value so the identifier no longer leads to the person. The audit chain keeps its entries and still verifies. The lawyer advisor must confirm that this satisfies the Act (`docs/PLAN.md` section 5.2).
 - Threat model: `docs/threat-model/0007-rights-requests.md`.
 
-## 10. Staff login with MFA (designed, not built)
+## 10. Staff login with MFA (built)
 
-Staff users per tenant with role `tenant_admin` or `dpo`. Password hashed with scrypt (N 32768, r 8, p 1, 16-byte salt, pinned in an ADR). TOTP per RFC 6238 (30 s step, 6 digits, one step of drift allowed, replay inside the window refused), secrets encrypted with an application key; recovery codes stored hashed and single-use. Five failed logins lock the account for 15 minutes. A session token is RS256 signed with a session key separate from the receipt key, valid 15 minutes, issued only after MFA; a session without completed MFA gets 403 on every scoped route. The API accepts a session token or an API key for the same scopes. Routes: `POST /v1/auth/login`, `/v1/auth/mfa/enroll`, `/v1/auth/mfa/verify`.
+Decisions and parameters are in `docs/adr/0004-staff-authentication.md`; threats in `docs/threat-model/0008-staff-authentication.md`.
+
+- Tables (migration 0007): `staff_users` (email sealed and indexed by HMAC, role `tenant_admin` or `dpo`, scrypt hash with pinned parameters, sealed authenticator secret, last accepted step, failure count, lock time, session version) and `staff_recovery_codes` (HMACs, `used_at`). The API role cannot create or delete staff; it can record sign-in progress only. A `slug_lookup` policy lets sign-in find a tenant by its slug.
+- Flow: `POST /v1/auth/login` (tenant slug, email, password) returns a 5 minute **challenge** and `mfa: enroll | verify`. First time: `POST /v1/auth/mfa/enroll` returns a Base32 secret and an `otpauth://` link; `POST /v1/auth/mfa/verify` with a code confirms it, returns eight recovery codes once, and returns the **session**. Later: login, then verify. `POST /v1/auth/refresh` extends a session until eight hours after the last full sign-in. `GET /v1/auth/me` says who is signed in.
+- Session token: `st_v1.<payload>.<HMAC-SHA256>` with a purpose, subject, tenant, role, session version, issue, expiry and sign-in time. 15 minutes. The guard re-reads the account on every request, so disabling a person or bumping `session_version` signs them out. Scopes by role: `tenant_admin` gets `tenant_admin` and `auditor`; `dpo` gets `dpo` and `auditor`.
+- Audit: `staff.logged_in`, `staff.mfa_enrolled`, `staff.locked`; later actions carry `staff:<id>` as the actor. `AuthContext.actor` replaced the key id as the audit actor everywhere.
+- Operators create accounts with `createStaffUser` (`src/staff/staff-admin.ts`). There is no command-line tool and no password or authenticator reset yet.
 
 ## 11. Dashboard (designed, not built)
 

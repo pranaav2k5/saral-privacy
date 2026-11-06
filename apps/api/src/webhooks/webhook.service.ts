@@ -42,7 +42,7 @@ export class WebhookService {
     return endpoints.rows.length;
   }
 
-  async create(tenantId: string, keyId: string, url: string, events: WebhookEvent[]): Promise<EndpointView & { secret: string }> {
+  async create(tenantId: string, actor: string, url: string, events: WebhookEvent[]): Promise<EndpointView & { secret: string }> {
     try {
       await assertWebhookUrl(url, this.resolver);
     } catch (e) {
@@ -57,7 +57,7 @@ export class WebhookService {
       if (count >= MAX_ENDPOINTS) throw new ConflictException({ error: "too_many_endpoints", message: `a tenant may have at most ${String(MAX_ENDPOINTS)} active endpoints` });
       const row = (await c.query<{ created_at: Date }>("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES ($1, $2, $3, $4) RETURNING created_at", [id, tenantId, url, events])).rows[0] as { created_at: Date };
       await this.audit.append(c, tenantId, {
-        actorType: "system", actorId: `api-key:${keyId}`, action: "webhook.endpoint_created", refTable: "webhook_endpoints", refId: id,
+        actorType: "system", actorId: actor, action: "webhook.endpoint_created", refTable: "webhook_endpoints", refId: id,
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, url, [...events].sort(), 1])),
       });
       return { id, url, events, createdAt: row.created_at.toISOString(), disabledAt: null, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, 1)) };
@@ -65,7 +65,7 @@ export class WebhookService {
   }
 
   /** Stops sending to an endpoint and frees its place in the cap. Events still waiting for it are closed by the worker. */
-  async disable(tenantId: string, keyId: string, id: string): Promise<void> {
+  async disable(tenantId: string, actor: string, id: string): Promise<void> {
     await this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
@@ -73,14 +73,14 @@ export class WebhookService {
       const e = r.rows[0];
       if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
       await this.audit.append(c, tenantId, {
-        actorType: "system", actorId: `api-key:${keyId}`, action: "webhook.endpoint_disabled", refTable: "webhook_endpoints", refId: id,
+        actorType: "system", actorId: actor, action: "webhook.endpoint_disabled", refTable: "webhook_endpoints", refId: id,
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, e.url, [...e.events].sort(), e.secret_version])),
       });
     });
   }
 
   /** Replaces the signing secret. The new one is shown once; the old one stops working at once (later deliveries are signed with the new one). */
-  async rotate(tenantId: string, keyId: string, id: string): Promise<{ id: string; secret: string }> {
+  async rotate(tenantId: string, actor: string, id: string): Promise<{ id: string; secret: string }> {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
@@ -88,7 +88,7 @@ export class WebhookService {
       const e = r.rows[0];
       if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
       await this.audit.append(c, tenantId, {
-        actorType: "system", actorId: `api-key:${keyId}`, action: "webhook.endpoint_rotated", refTable: "webhook_endpoints", refId: id,
+        actorType: "system", actorId: actor, action: "webhook.endpoint_rotated", refTable: "webhook_endpoints", refId: id,
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, e.url, [...e.events].sort(), e.secret_version])),
       });
       return { id, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, e.secret_version)) };

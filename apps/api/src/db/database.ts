@@ -7,6 +7,8 @@ export interface AppScope {
   tenantId?: string;
   apiKeyId?: string;
   publicNoticeId?: string;
+  /** Sign-in names a tenant by its slug before any tenant is known. */
+  tenantSlug?: string;
 }
 
 /**
@@ -44,6 +46,7 @@ export class Database implements OnModuleDestroy {
       await client.query("SET LOCAL ROLE saral_app");
       if (scope.tenantId !== undefined) await client.query("SELECT set_config('app.tenant_id', $1, true)", [scope.tenantId]);
       if (scope.apiKeyId !== undefined) await client.query("SELECT set_config('app.api_key_id', $1, true)", [scope.apiKeyId]);
+      if (scope.tenantSlug !== undefined) await client.query("SELECT set_config('app.tenant_slug', $1, true)", [scope.tenantSlug]);
       if (scope.publicNoticeId !== undefined) await client.query("SELECT set_config('app.public_notice_id', $1, true)", [scope.publicNoticeId]);
       const result = await fn(client);
       await client.query("COMMIT");
