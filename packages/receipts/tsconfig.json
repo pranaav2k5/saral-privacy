@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["jest", "node"],
+    "noEmit": true,
+    "paths": { "@saral/schemas": ["../schemas/src/index.ts"] }
+  },
+  "include": ["src"]
+}
