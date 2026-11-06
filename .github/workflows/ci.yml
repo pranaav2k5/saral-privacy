@@ -20,6 +20,24 @@ jobs:
       fail-fast: false
       matrix:
         node: [22, 24]
+    # The API tests run the migrations against a real PostgreSQL. They fail, never skip, without it.
+    # Dev-only credentials for a throwaway service container.
+    env:
+      DATABASE_URL: postgres://saral:saral_dev@localhost:5432/saral
+    services:
+      postgres:
+        image: postgres@sha256:933463a6c8eba2b9f5cd414138738cd8d5519cd2c471214c222652f547a66a32 # postgres:16
+        env:
+          POSTGRES_USER: saral
+          POSTGRES_PASSWORD: saral_dev
+          POSTGRES_DB: saral
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U saral -d saral"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
