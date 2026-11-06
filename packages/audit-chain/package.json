@@ -1,0 +1,17 @@
+{
+  "name": "@saral/audit-chain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tamper-evident audit chain: HMAC hash chain, RFC 6962 Merkle tree, daily anchors",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@saral/schemas": "workspace:*"
+  }
+}
