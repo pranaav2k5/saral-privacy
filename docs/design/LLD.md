@@ -59,11 +59,14 @@ A canonical string is `JSON.stringify` of a fixed-order array of validated value
 | `SARAL_DEV_MASTER_SECRET` | At least 32 characters. Development and test only; derives every key. Without it a random one is made per process. |
 | `SARAL_WEBHOOK_WORKER` | `on` starts the delivery poller in this process. |
 | `PUBLIC_BASE_URL` | Public https base URL of the API, used in receipts. |
+| `TRUST_PROXY` | How many proxies sit in front of the app (1 to 10), so the caller's address is read from `X-Forwarded-For`. Unset or `0`: the connection's own address, and the header is ignored. Anything else makes the app refuse to start. Behind a load balancer it must be set, or every caller shares the balancer's address and is limited together. |
 
 ### 6.2 Request path
 
-1. CORS (`configureApp`): reflects the origin, allows `Authorization`, `Content-Type` and `Idempotency-Key`, never credentials.
+1. CORS (`configureApp`): reflects the origin, allows `Authorization`, `Content-Type` and `Idempotency-Key`, exposes `Retry-After`, never credentials.
+1a. `IpRateLimitGuard` (global, first; `src/ratelimit`): counts the caller by address (IPv4, or IPv6 /64) in a fixed one-minute window, 600 requests, and the three sign-in routes (`@Throttle("auth")`) also in a bucket of 10. It runs before anything is looked up, so a flood of made-up keys or passwords never reaches the database or the password hash. Past a limit: 429, `Retry-After`, `{ error: "rate_limited" }`. `/healthz` is exempt (`@SkipThrottle`). The counters are in this process (`FixedWindowLimiter`, at most 100000 keys, expired first and then oldest dropped), so with several instances each counts separately.
 2. `AuthGuard` (global): no `@Public()` or `@Scopes()` on the route gives 403. Otherwise parse `Authorization: Bearer <key>`, read the key row under the `key_lookup` policy, compare the HMAC of the secret in constant time, reject revoked keys and a kind mismatch (all with the same 401 body), check the origin list of a publishable key, check scopes (403). The result is `req.auth = { keyId, tenantId, kind, scopes }`.
+2a. `PrincipalRateLimitGuard` (global, after `AuthGuard`): 1200 requests a minute per key or staff session, from anywhere. A request that failed to authenticate never reaches it.
 3. Controller validates the body with small helpers (`objectBody`, `uuidParam`, `normalizeIdentifier`, ...) and answers 400 with `{ error: "invalid_request", field, message }`.
 4. `Database.inScope({ tenantId })` (pool of 10, 5 second wait for a connection, 30 second statement limit, errors on idle connections are logged): `BEGIN`, `SET LOCAL ROLE saral_app`, `set_config('app.tenant_id', ..., true)`, the work, `COMMIT` or `ROLLBACK`. `Database.asWorker` does the same as `saral_worker` for the webhook worker.
 

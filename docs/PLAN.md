@@ -461,7 +461,7 @@ This section records what exists in the repository against the scope in section 
 | 4. Tamper-evident audit log | Built (library, database, verify endpoint) | `packages/audit-chain`, migration 0002, `/v1/audit/*` | Nightly anchor job and the S3 Object Lock write; the standalone verifier command-line tool; the performance benchmark planned for week 8. |
 | 5. Data-principal rights (DSR) | Built | `apps/api/src/dsr`, migration 0006 | Confirmation of the 30-day due date and of the erasure design with the lawyer advisor; the wallet side (a person tracking their own request); compiling an access response automatically. |
 | 6. Webhooks | Built | `apps/api/src/webhooks` | Delivery log and manual redelivery routes, auto-disable of failing endpoints. (Disable and rotate routes exist.) |
-| 7. Multi-tenancy and auth | Built, except the `principal` scope | Row-level security, API keys (issued, listed and revoked with the operator tool), staff login with MFA (`apps/api/src/staff`, ADR 0004) | The `principal` scope and wallet login (phone OTP); self-service password change; the operator tool works only with the development key provider; rate limiting. |
+| 7. Multi-tenancy and auth | Built, except the `principal` scope | Row-level security, API keys (issued, listed and revoked with the operator tool), staff login with MFA (`apps/api/src/staff`, ADR 0004) | The `principal` scope and wallet login (phone OTP); self-service password change; the operator tool works only with the development key provider; rate limits are per instance. |
 
 | P1 item | Status |
 |---|---|
@@ -472,6 +472,6 @@ This section records what exists in the repository against the scope in section 
 | 12. External VAPT | Not started. Book the slot in week 6 as planned. |
 | 13. Public verifier page and JWKS | JWKS built; verifier page not built |
 
-Cross-cutting work not done: KMS adapters and the production deployment (only the audit anchor bucket Terraform module exists), rate limiting, the AWS cost estimate (week 3), the IndicTrans2 benchmark, all discovery, legal and go-to-market work in sections 8 and 12 (these are not engineering tasks), and the open decisions in section 13.
+Cross-cutting work not done: KMS adapters and the production deployment (only the audit anchor bucket Terraform module exists), the AWS cost estimate (week 3), the IndicTrans2 benchmark, all discovery, legal and go-to-market work in sections 8 and 12 (these are not engineering tasks), and the open decisions in section 13.
 
-Two risks found while building, both in `docs/threat-model/0004-consent-api.md`: a consent can be submitted for someone else's identifier through a publishable key, and there is no rate limiting. Both need a decision before a pilot.
+Two risks found while building, both in `docs/threat-model/0004-consent-api.md`: a consent can be submitted for someone else's identifier through a publishable key (rate limiting now bounds how fast, threat model 0011, but does not stop it). It needs a decision before a pilot.

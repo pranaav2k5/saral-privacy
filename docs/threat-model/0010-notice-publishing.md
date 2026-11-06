@@ -23,10 +23,10 @@ The integrity of the notice text that every consent receipt points to, the audit
 | Tampering | Two simultaneous publications get the same version, or the list order disagrees with the versions. | Publication runs under the per-organisation lock, takes the next version inside it, and stamps the time inside it. | `notices-publish.e2e.test.ts` (ten at once) |
 | Information disclosure | Error messages echo what was submitted. | Messages are fixed text naming the field. | `notices-publish.e2e.test.ts` |
 | Denial of service (of consent capture) | A notice is published whose largest receipt exceeds the 16 KiB limit, so every consent that grants all of it fails. | The size of the largest possible receipt is measured at publication (with room for the signature) and the notice is refused with 422 `receipt_too_large`. Not measured while the organisation has no receipt profile; grants then fail with `incomplete_setup`, which names the cause. | `notices-publish.e2e.test.ts` (a search for the exact limit, then a consent in full at that size) |
-| Denial of service | A caller floods the organisation with notices. | Only an administrator can publish, each publication is audited, and the body size is limited. There is no cap or rate limit yet. | Residual risk |
+| Denial of service | A caller floods the organisation with notices. | Only an administrator can publish, each publication is audited, and the body size is limited. Requests are rate limited per key (threat model 0011) but there is no cap on notices per organisation. | `ratelimit.e2e.test.ts` |
 
 ## Residual risk
 
 - An administrator can publish a notice that is legally poor. The platform marks every notice pending human review and does not judge the content. The privacy lawyer's review of templates is a launch gate (decision D16).
-- There is no cap on notices per organisation and no rate limit. Rate limiting is planned work for the whole API.
+- There is no cap on notices per organisation. Rate limiting bounds how fast an administrator's key can publish (threat model 0011).
 - Retention in days and retention in words are separate fields and can disagree. A person reading the notice sees the words, and the receipt says the days.

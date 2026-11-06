@@ -3,6 +3,9 @@ import { APP_GUARD } from "@nestjs/core";
 import { AuditController } from "./audit/audit.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { AuthGuard } from "./auth/auth.guard.js";
+import { DEFAULT_LIMITS, RATE_LIMITS, RATE_LIMIT_CLOCK } from "./ratelimit/policies.js";
+import { IpRateLimitGuard, PrincipalRateLimitGuard } from "./ratelimit/rate-limit.guard.js";
+import { RateLimitService } from "./ratelimit/rate-limit.service.js";
 import { ConsentsController } from "./consent/consent.controller.js";
 import { ConsentService } from "./consent/consent.service.js";
 import { Database } from "./db/database.js";
@@ -41,7 +44,13 @@ import { NoticeService } from "./notices/notice.service.js";
     WebhookRunner,
     { provide: URL_RESOLVER, useValue: systemResolver },
     { provide: WEBHOOK_HTTP, useFactory: () => createHttpsClient({ resolver: systemResolver }) },
+    { provide: RATE_LIMITS, useValue: DEFAULT_LIMITS },
+    { provide: RATE_LIMIT_CLOCK, useValue: Date.now },
+    RateLimitService,
+    // In this order: by address before anything is looked up, then who the caller is, then by key or session.
+    { provide: APP_GUARD, useClass: IpRateLimitGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useClass: PrincipalRateLimitGuard },
   ],
 })
 export class ApiModule {}

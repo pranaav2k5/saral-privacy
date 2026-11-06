@@ -74,6 +74,7 @@ const FALLBACK: Record<number, string> = {
   409: "That is not possible in the current state.",
   410: "That is no longer available.",
   422: "That could not be done as asked.",
+  429: "Too many attempts. Wait a minute and try again.",
 };
 
 /** Calls the Saral API with the signed-in person's session. Every failure is an `ApiError` with words a person can read. */

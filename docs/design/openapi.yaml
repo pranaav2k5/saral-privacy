@@ -13,7 +13,13 @@ info:
     Browsers may call the API: CORS reflects the caller's origin and never allows cookies. This is not authorisation;
     the key, its scopes and its origin list are checked on every request.
 
-    Rate limits are not built yet.
+    Rate limits (counted per minute, in each running instance): 600 requests from one address, 10 sign-in steps from one
+    address (`/v1/auth/login`, `/v1/auth/mfa/enroll` and `/v1/auth/mfa/verify` share this), and 1200 requests with one key or
+    one staff session from anywhere. Past a limit the answer is 429 with `Retry-After` (seconds) and
+    `{ "error": "rate_limited", "message": "Too many requests. Try again in N seconds." }`. `Retry-After` is exposed to
+    browser scripts. `/healthz` is never limited. An address is its IPv4 address or its IPv6 /64. The caller's address is the
+    connection's own unless the deployment states how many proxies to believe (`TRUST_PROXY`); `X-Forwarded-For` is ignored
+    otherwise.
 servers:
   - url: http://localhost:4000
     description: Local development
@@ -190,6 +196,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/consents/withdraw:
     post:
       tags: [Consents]
@@ -577,6 +584,7 @@ paths:
                   mfa: { enum: [enroll, verify] }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/mfa/enroll:
     post:
       tags: [Staff sign-in]
@@ -611,6 +619,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/mfa/verify:
     post:
       tags: [Staff sign-in]
@@ -644,6 +653,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/auth/refresh:
     post:
       tags: [Staff sign-in]
@@ -783,6 +793,14 @@ components:
   responses:
     BadRequest:
       description: The request is malformed. `field` names the problem.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests. `Retry-After` says how many seconds to wait.
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
