@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { sha256Hex } from "@saral/audit-chain";
-import { ReceiptError, buildReceiptClaims, signReceipt, type PiiController, type ReceiptPurpose } from "@saral/receipts";
+import { ReceiptError, buildReceiptClaims, signReceipt, type PiiController } from "@saral/receipts";
 import { canonicalConsentRecord, type CollectionMethod, type ConsentFields, type PurposeGrant } from "@saral/schemas";
 import type pg from "pg";
 import { AuditService } from "../audit/audit.service.js";
@@ -11,6 +11,7 @@ import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
 import { PrincipalService } from "../principals/principal.service.js";
 import { SETTINGS, type Settings } from "../settings.js";
 import { receiptPolicyUrl } from "./policy-url.js";
+import { COLLECTION, toReceiptPurpose, type PurposeDefinition } from "./receipt-mapping.js";
 import { WebhookService } from "../webhooks/webhook.service.js";
 
 export interface GrantInput {
@@ -23,17 +24,7 @@ export interface GrantInput {
   idempotencyKey?: string;
 }
 
-export interface PurposeDefinition {
-  key: string;
-  purpose: string;
-  purposeCategory: string[];
-  piiCategory: string[];
-  termination: string;
-  retentionDays: number;
-  thirdPartyDisclosure: boolean;
-  thirdPartyName?: string;
-  primaryPurpose?: boolean;
-}
+export type { PurposeDefinition };
 
 interface TenantProfile {
   controller?: PiiController;
@@ -41,11 +32,6 @@ interface TenantProfile {
   service?: string;
 }
 
-const COLLECTION: Record<CollectionMethod, string> = {
-  web_sdk: "web_sdk: consent banner on the organisation's website or app",
-  api: "api: server-side call by the organisation",
-  dpo_entry: "dpo_entry: recorded by the data protection officer",
-};
 
 type ConsentRow = {
   id: string; tenant_id: string; principal_id: string; notice_id: string; notice_sha256: string;
@@ -137,15 +123,7 @@ export class ConsentService {
           receiptId, principalId, consentedAt: grantedAt, collectionMethod: COLLECTION[collectionMethod], language: notice.language,
           controller: profile.controller as PiiController, policyUrl: receiptPolicyUrl(this.settings.publicBaseUrl, profile.policyUrl, notice.id) as string, service: profile.service as string,
           consentId, noticeId: notice.id, noticeSha256: notice.canonical_sha256,
-          purposes: purposes.filter((p) => p.granted).map((p): ReceiptPurpose => {
-            const d = defs.get(p.key) as PurposeDefinition;
-            return {
-              purpose: d.purpose, consentType: "EXPLICIT", purposeCategory: d.purposeCategory, piiCategory: d.piiCategory,
-              termination: d.termination, thirdPartyDisclosure: d.thirdPartyDisclosure,
-              ...(d.thirdPartyName !== undefined ? { thirdPartyName: d.thirdPartyName } : {}),
-              ...(d.primaryPurpose !== undefined ? { primaryPurpose: d.primaryPurpose } : {}),
-            };
-          }),
+          purposes: purposes.filter((p) => p.granted).map((p) => toReceiptPurpose(defs.get(p.key) as PurposeDefinition)),
         });
         jwt = await signReceipt(claims, this.keys.receiptSigner());
       } catch (e) {

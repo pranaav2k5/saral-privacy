@@ -12,6 +12,7 @@ export {
 export { buildJwks, type JwkPublic } from "./jwks";
 export { createLocalSigner, jwkThumbprint } from "./local-signer";
 export {
+  MAX_TOKEN_CHARS,
   ReceiptVerificationError,
   signReceipt,
   verifyReceipt,

@@ -58,6 +58,70 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Jwks" }
+  /v1/notices:
+    post:
+      tags: [Notices]
+      operationId: publishNotice
+      summary: Publish a new version of the organisation's privacy notice
+      description: >-
+        The text is made from the reviewed template for the language, filled with the values given here. It is never taken
+        from the caller, and it is marked `pending-human-review`. Every publication is a new version of its language
+        (the first is version 1, and each language is numbered on its own). A published notice never changes, so an
+        edit is a new notice, and receipts keep pointing to the text the person saw. Each purpose carries both its
+        notice wording (`name`, `description`, `dataItems`, `retention`) and what receipts say about it (`key`,
+        `retentionDays`, categories, third-party disclosure). A purpose that discloses to a third party must name an
+        organisation that is listed in `notice.thirdParties`. Fields that are not part of the request are refused, so
+        a misspelt field is not silently ignored. Publishing is an audit event (`notice.published`). The response has
+        no text; read it at `GET /v1/notices/{id}`.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublishNotice" }
+      responses:
+        "201":
+          description: Published.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NoticeSummary" }
+        "400":
+          description: >-
+            Invalid. `field` names the first problem by its place in the request, for example `notice.withdrawalUrl` or
+            `purposes[1].retentionDays`. When there are several problems with the notice text, `errors` lists them all.
+            Nothing submitted is echoed back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: >-
+            `receipt_too_large`: a receipt that grants every purpose would be over the 16384-character limit of a
+            receipt (the estimate counts the organisation's receipt profile and leaves room for the signature), so
+            every consent that grants all of it would fail. Use fewer or shorter purposes and categories. Not checked
+            until the organisation has a receipt profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      tags: [Notices]
+      operationId: listNotices
+      summary: The organisation's published notices, newest first
+      description: Without the text, which is public at `GET /v1/notices/{id}`. Use it to find the id of a notice to give the SDK.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: The notices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NoticeSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/notices/{id}:
     get:
       tags: [Notices]
@@ -755,6 +819,15 @@ components:
         error: { type: string }
         message: { type: string }
         field: { type: string }
+        errors:
+          type: array
+          description: Every problem, when there are several (publishing a notice).
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: { type: string }
+              message: { type: string }
     WebhookEvent:
       enum: [consent.granted, consent.withdrawn, dsr.submitted, dsr.transitioned]
     WebhookEndpoint:
@@ -863,6 +936,57 @@ components:
         consentId: { type: string, format: uuid }
         status: { const: withdrawn }
         withdrawnAt: { type: string, format: date-time }
+    PublishNotice:
+      type: object
+      required: [language, notice, purposes]
+      additionalProperties: false
+      properties:
+        language: { enum: [en, hi] }
+        notice:
+          type: object
+          required: [organisationName, websiteUrl, grievanceEmail, grievanceAddress, processesChildrenData, withdrawalUrl, rightsRequestUrl]
+          additionalProperties: false
+          properties:
+            organisationName: { type: string, maxLength: 200 }
+            websiteUrl: { type: string, format: uri, maxLength: 500 }
+            grievanceEmail: { type: string, format: email, maxLength: 254 }
+            grievanceAddress: { type: string, maxLength: 300 }
+            dpoName: { type: string, maxLength: 200 }
+            thirdParties: { type: array, maxItems: 50, items: { type: string, maxLength: 200 } }
+            processesChildrenData: { type: boolean }
+            withdrawalUrl: { type: string, format: uri, maxLength: 500, description: "https. Every receipt names it as the way to withdraw." }
+            rightsRequestUrl: { type: string, format: uri, maxLength: 500 }
+        purposes:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items:
+            type: object
+            required: [key, name, description, dataItems, retention, retentionDays, purposeCategory, piiCategory, thirdPartyDisclosure]
+            additionalProperties: false
+            properties:
+              key: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "What the SDK sends. Unique in the notice." }
+              name: { type: string, maxLength: 200 }
+              description: { type: string, maxLength: 1000 }
+              dataItems: { type: array, minItems: 1, maxItems: 50, items: { type: string, maxLength: 100 } }
+              retention: { type: string, maxLength: 200, description: "How long, in words, as the notice says it." }
+              retentionDays: { type: integer, minimum: 0, maximum: 36500, description: "How long, in days, as receipts say it." }
+              purposeCategory: { type: array, minItems: 1, maxItems: 10, items: { type: string, maxLength: 100 } }
+              piiCategory: { type: array, minItems: 1, maxItems: 10, items: { type: string, maxLength: 100 } }
+              thirdPartyDisclosure: { type: boolean }
+              thirdPartyName: { type: string, description: "Required, and listed in notice.thirdParties, when thirdPartyDisclosure is true. Not allowed otherwise." }
+              primaryPurpose: { type: boolean }
+    NoticeSummary:
+      type: object
+      required: [id, version, language, reviewStatus, canonicalSha256, publishedAt, purposeKeys]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer }
+        language: { type: string }
+        reviewStatus: { enum: [pending-human-review, reviewed] }
+        canonicalSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        publishedAt: { type: string, format: date-time }
+        purposeKeys: { type: array, items: { type: string } }
     Notice:
       type: object
       required: [id, version, language, canonicalText, canonicalSha256, reviewStatus, publishedAt]

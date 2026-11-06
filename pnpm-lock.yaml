@@ -50,6 +50,9 @@ importers:
       '@saral/audit-chain':
         specifier: workspace:*
         version: link:../../packages/audit-chain
+      '@saral/notice':
+        specifier: workspace:*
+        version: link:../../packages/notice
       '@saral/receipts':
         specifier: workspace:*
         version: link:../../packages/receipts
