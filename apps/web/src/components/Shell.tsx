@@ -16,11 +16,13 @@ export const NAV: Record<Role, readonly { href: string; label: string }[]> = {
     { href: "/", label: "Overview" },
     { href: "/requests", label: "Requests" },
     { href: "/audit", label: "Audit" },
+    { href: "/account", label: "Account" },
   ],
   tenant_admin: [
     { href: "/", label: "Overview" },
     { href: "/audit", label: "Audit" },
     { href: "/integrations", label: "Integrations" },
+    { href: "/account", label: "Account" },
   ],
 };
 

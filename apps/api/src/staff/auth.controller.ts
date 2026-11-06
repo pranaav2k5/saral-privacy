@@ -54,6 +54,16 @@ export class AuthController {
     return this.staff.refresh(auth);
   }
 
+  /** Changes the signed-in person's own password. The answer is a new session; every other session of theirs ends. */
+  @Post("password")
+  @HttpCode(200)
+  @Scopes("tenant_admin", "dpo")
+  changePassword(@Auth() auth: AuthContext, @Body() raw: unknown) {
+    const body = objectBody(raw);
+    // The new password may be longer than the policy allows, so that the policy can say so in words.
+    return this.staff.changePassword(auth, text(body.currentPassword, "currentPassword", PASSWORD_MAX), text(body.newPassword, "newPassword", 1024));
+  }
+
   @Get("me")
   @Scopes("tenant_admin", "dpo")
   me(@Auth() auth: AuthContext) {

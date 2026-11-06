@@ -24,14 +24,16 @@ Staff accounts (they can read consents, rights requests and contact details), th
 | Information disclosure | The password, email or authenticator secret is stored or returned in the clear. | Passwords only as scrypt hashes; email and authenticator secrets sealed; recovery codes only as HMACs; a test searches every table. `/v1/auth/me` returns no secrets. | `staff.e2e.test.ts`: what is stored |
 | Repudiation | Who did what. | Sign-in, authenticator set-up and lock-out are audit entries; actions by a signed-in person are audited as `staff:<id>`. | `staff.e2e.test.ts` |
 | Tampering | A person who should be out is still in. | Disabling an account or bumping its session version ends all its sessions on the next request. | `staff.e2e.test.ts` |
+| Spoofing | A stolen session is used to change the password and take the account over. | Changing it needs the current password, which a session thief does not have. Wrong current passwords count toward the same five-failure lock as sign-in, and answer 422 so the dashboard does not read them as an ended session. A success ends every other session, including the thief's. | `password-change.e2e.test.ts` |
+| Elevation of privilege | The application role is used to make an account an administrator or re-enable it. | Migration 0008 grants it `UPDATE` on the password hash and the session version only. The database still refuses a hash that is not in the pinned shape. | `staff-grants.test.ts` |
 | Denial of service | An attacker locks a real person out by failing their password five times. | Accepted trade-off: lock-out is per account. The lock lasts 15 minutes. | open item |
 | Denial of service | Expensive hashing used to tie up the server. | Each login costs one scrypt run (about 32 MiB); there is no request rate limit yet. | open item |
 
 ## Residual risks
 
-- No rate limiting by address, and lock-out lets an attacker lock someone out.
+- Sign-in is limited by address (threat model 0011), and lock-out still lets an attacker lock someone out.
 - A stolen session token works until it expires (15 minutes), is refreshed up to eight hours, or the account is disabled. There is no logout route that revokes one session; bumping the session version ends them all.
-- Accounts are created and recovered, and API keys and the controller profile are managed, by the operator tool (`apps/api/src/operator`). Key tokens are printed once and never stored; a lost key is revoked and replaced. It runs with database-owner credentials, so its actions are not in the organisation's audit log, and a person who loses their authenticator and recovery codes must ask an operator. It needs the development key provider, so it cannot be used in production until KMS exists. A generated password cannot be changed by the person, only reset by an operator.
+- Accounts are created and recovered, and API keys and the controller profile are managed, by the operator tool (`apps/api/src/operator`). Key tokens are printed once and never stored; a lost key is revoked and replaced. It runs with database-owner credentials, so its actions are not in the organisation's audit log, and a person who loses their authenticator and recovery codes must ask an operator. It needs the development key provider, so it cannot be used in production until KMS exists. The person can change their own password (below), but nothing forces them to: until they do, the operator who generated it knows it.
 - The development key provider derives the session and index keys from one secret.
 - The dashboard must keep the token out of script-readable storage if it can (it cannot with a bearer token in a single-page app; revisit with a cookie-based session).
 

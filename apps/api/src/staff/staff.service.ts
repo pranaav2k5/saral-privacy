@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException, UnprocessableEntityException } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { sha256Hex } from "@saral/audit-chain";
 import type pg from "pg";
@@ -10,7 +10,8 @@ import { Database } from "../db/database.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
 import { recoveryCodeHash } from "./staff-admin.js";
 import { emailBlind } from "./staff-admin.js";
-import { hashPassword, verifyPassword } from "./password.js";
+import { bad } from "../http/validate.js";
+import { checkPasswordPolicy, hashPassword, verifyPassword } from "./password.js";
 import { signToken, verifyToken, type StaffRole, type TokenPayload } from "./session-token.js";
 import { base32Decode, base32Encode, generateTotpSecret, otpauthUrl, verifyTotp } from "./totp.js";
 
@@ -198,6 +199,54 @@ export class StaffService {
     if (Math.floor(Date.now() / 1000) - auth.authAt >= SESSION_MAX_SECONDS) throw new UnauthorizedException("the session has reached its limit; sign in again");
     const s = this.issue({ id: auth.keyId, tenant_id: auth.tenantId, role: auth.role, session_version: auth.sessionVersion }, "session", SESSION_SECONDS, auth.authAt);
     return { ...s, role: auth.role };
+  }
+
+  /**
+   * Changes the signed-in person's own password and ends every other session of theirs. The current password must be right, and
+   * wrong ones are counted and lock the account exactly as at sign-in, so a stolen session cannot be used to guess it. The answer
+   * is a new session that keeps the time of the real sign-in, so the eight-hour limit does not start again. A wrong current password
+   * is a 422, never a 401: a 401 would tell the dashboard that the session had ended.
+   */
+  async changePassword(auth: AuthContext, current: string, next: string): Promise<SessionResult> {
+    if (auth.kind !== "session" || auth.role === undefined || auth.authAt === undefined || auth.sessionVersion === undefined) {
+      throw new ForbiddenException("only a signed-in person can change their password");
+    }
+    const role = auth.role;
+    const authAt = auth.authAt;
+    const outcome = await this.db.inScope({ tenantId: auth.tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [auth.tenantId]);
+      const row = (await c.query<Staff>("SELECT * FROM staff_users WHERE id = $1 FOR UPDATE", [auth.keyId])).rows[0];
+      if (row === undefined || row.disabled_at !== null || row.session_version !== auth.sessionVersion) return { kind: "ended" as const };
+      if (this.locked(row)) return { kind: "locked" as const };
+      const email = decryptContact(this.keys.contactKey(), row.tenant_id, `email:${row.id}`, new Uint8Array(row.email_sealed));
+      const problem = checkPasswordPolicy(next, email);
+      if (problem !== null) return { kind: "weak" as const, problem };
+      if (!(await verifyPassword(current, row.password_hash))) {
+        await this.fail(c, row);
+        return { kind: "wrong" as const };
+      }
+      if (await verifyPassword(next, row.password_hash)) return { kind: "same" as const };
+      const changed = await c.query<{ session_version: number }>(
+        "UPDATE staff_users SET password_hash = $2, session_version = session_version + 1, failed_attempts = 0, locked_until = NULL WHERE id = $1 RETURNING session_version",
+        [row.id, await hashPassword(next)],
+      );
+      await this.record(c, row, "staff.password_changed");
+      return { kind: "changed" as const, row: { id: row.id, tenant_id: row.tenant_id, role, session_version: (changed.rows[0] as { session_version: number }).session_version } };
+    });
+    switch (outcome.kind) {
+      case "ended":
+        throw new UnauthorizedException("invalid or expired session");
+      case "locked":
+        throw new ForbiddenException({ error: "locked", message: `Too many wrong passwords. Try again in ${String(LOCK_MINUTES)} minutes.` });
+      case "weak":
+        throw bad("newPassword", outcome.problem);
+      case "wrong":
+        throw new UnprocessableEntityException({ error: "wrong_password", message: "The current password is not right." });
+      case "same":
+        throw bad("newPassword", "must be different from the current password");
+      case "changed":
+        return { ...this.issue(outcome.row, "session", SESSION_SECONDS, authAt), role };
+    }
   }
 
   async me(auth: AuthContext): Promise<{ staffId: string; email: string | null; role: StaffRole | null; tenantId: string; scopes: Scope[] }> {
