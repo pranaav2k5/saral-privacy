@@ -15,10 +15,17 @@ export const Scopes = (...scopes: Scope[]) => SetMetadata(ACCESS_KEY, { scopes }
 export const Public = () => SetMetadata(ACCESS_KEY, { public: true } satisfies AccessRule);
 
 export interface AuthContext {
+  /** Who is acting, for audit entries: `api-key:<id>` or `staff:<id>`. */
+  actor: string;
+  /** The key's id, or the staff user's id. */
   keyId: string;
   tenantId: string;
-  kind: ApiKeyKind;
+  kind: ApiKeyKind | "session";
   scopes: Scope[];
+  /** Sessions only: the staff role, when the person last signed in with a password and a code (seconds), and the session version. */
+  role?: "tenant_admin" | "dpo";
+  authAt?: number;
+  sessionVersion?: number;
 }
 
 export interface HttpRequest {

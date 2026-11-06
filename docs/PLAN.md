@@ -461,7 +461,7 @@ This section records what exists in the repository against the scope in section 
 | 4. Tamper-evident audit log | Built (library, database, verify endpoint) | `packages/audit-chain`, migration 0002, `/v1/audit/*` | Nightly anchor job and the S3 Object Lock write; the standalone verifier command-line tool; the performance benchmark planned for week 8. |
 | 5. Data-principal rights (DSR) | Built | `apps/api/src/dsr`, migration 0006 | Confirmation of the 30-day due date and of the erasure design with the lawyer advisor; the wallet side (a person tracking their own request); compiling an access response automatically. |
 | 6. Webhooks | Built | `apps/api/src/webhooks` | Delivery log and manual redelivery routes, auto-disable of failing endpoints. (Disable and rotate routes exist.) |
-| 7. Multi-tenancy and auth | Partly | Row-level security and API keys: built. Staff login with MFA: designed only. | Staff login, MFA, sessions, the `principal` scope and wallet login. |
+| 7. Multi-tenancy and auth | Built, except the `principal` scope | Row-level security, API keys, staff login with MFA (`apps/api/src/staff`, ADR 0004) | The `principal` scope and wallet login (phone OTP); an operator tool to create staff and to reset passwords and authenticators; rate limiting. |
 
 | P1 item | Status |
 |---|---|

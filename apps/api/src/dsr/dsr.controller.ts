@@ -50,7 +50,7 @@ export class DsrController {
       throw bad("reason", `must be text of at most ${String(MAX_REASON)} characters`);
     }
     if (body.to === "rejected" && (typeof body.reason !== "string" || body.reason.trim() === "")) throw bad("reason", "a rejection needs a reason");
-    return this.dsr.transition(auth.tenantId, auth.keyId, requestId, body.to as DsrState, typeof body.reason === "string" ? body.reason : undefined);
+    return this.dsr.transition(auth.tenantId, auth.actor, requestId, body.to as DsrState, typeof body.reason === "string" ? body.reason : undefined);
   }
 
   /** Shows the person's contact to the data protection officer. Every read is an audit event. */
@@ -58,6 +58,6 @@ export class DsrController {
   @HttpCode(200)
   @Scopes("dpo")
   reveal(@Auth() auth: AuthContext, @Param("id") id: string) {
-    return this.dsr.revealContact(auth.tenantId, auth.keyId, uuidParam(id, "id"));
+    return this.dsr.revealContact(auth.tenantId, auth.actor, uuidParam(id, "id"));
   }
 }

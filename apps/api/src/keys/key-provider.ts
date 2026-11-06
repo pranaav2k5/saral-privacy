@@ -17,6 +17,10 @@ export interface KeyProvider {
   webhookKey(): Uint8Array;
   /** AES-256-GCM key that seals people's contact details at rest. */
   contactKey(): Uint8Array;
+  /** Key that signs staff session tokens. */
+  sessionKey(): Uint8Array;
+  /** Key for the HMAC lookup index of staff email addresses and recovery codes. */
+  staffIndexKey(): Uint8Array;
   receiptSigner(): ReceiptSigner;
   jwks(): { keys: JwkPublic[] };
 }
@@ -46,6 +50,8 @@ export async function createDevKeyProvider(masterSecret: string | undefined, nod
   const pepper = derive(master, "api-key-pepper-v1");
   const webhook = derive(master, "webhook-secret-v1");
   const contact = derive(master, "contact-seal-v1");
+  const session = derive(master, "session-token-v1");
+  const staffIndex = derive(master, "staff-index-v1");
   const { signer, publicJwk } = await createLocalSigner();
   const jwks = buildJwks([publicJwk]);
   return {
@@ -55,6 +61,8 @@ export async function createDevKeyProvider(masterSecret: string | undefined, nod
     apiKeyPepper: () => pepper,
     webhookKey: () => webhook,
     contactKey: () => contact,
+    sessionKey: () => session,
+    staffIndexKey: () => staffIndex,
     receiptSigner: () => signer,
     jwks: () => jwks,
   };
@@ -72,6 +80,8 @@ const UNAVAILABLE: KeyProvider = {
   apiKeyPepper: unavailable,
   webhookKey: unavailable,
   contactKey: unavailable,
+  sessionKey: unavailable,
+  staffIndexKey: unavailable,
   receiptSigner: unavailable,
   jwks: unavailable,
 };

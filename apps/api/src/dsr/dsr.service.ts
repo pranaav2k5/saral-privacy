@@ -101,7 +101,7 @@ export class DsrService {
   }
 
   /** Moves a request to a new state. One transaction: the move, its audit entry, its webhook, and (for a fulfilled erasure) the erasure. */
-  async transition(tenantId: string, keyId: string, id: string, to: DsrState, reason?: string): Promise<DsrView> {
+  async transition(tenantId: string, actor: string, id: string, to: DsrState, reason?: string): Promise<DsrView> {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const row = await this.load(c, id, true);
@@ -114,7 +114,7 @@ export class DsrService {
         [id, to, to === "rejected" ? (reason ?? null) : null, to === "closed" ? now : null],
       )).rows[0] as Row;
       if (to === "fulfilled" && row.type === "erasure") await this.erase(c, tenantId, row.principal_id, now);
-      await this.audit.append(c, tenantId, { actorType: "dpo", actorId: `api-key:${keyId}`, action: "dsr.transitioned", refTable: "dsr_requests", refId: id, payloadSha256: payload(updated, to, updated.decided_reason) });
+      await this.audit.append(c, tenantId, { actorType: "dpo", actorId: actor, action: "dsr.transitioned", refTable: "dsr_requests", refId: id, payloadSha256: payload(updated, to, updated.decided_reason) });
       await this.webhooks.enqueue(c, tenantId, "dsr.transitioned", { requestId: id, type: row.type, from: row.state, state: to, dueAt: updated.due_at.toISOString() });
       return view(updated, true);
     });
@@ -132,13 +132,13 @@ export class DsrService {
   }
 
   /** Shows the person's contact to the data protection officer. Every read is an audit event saying who read it. */
-  async revealContact(tenantId: string, keyId: string, id: string): Promise<{ contact: string }> {
+  async revealContact(tenantId: string, actor: string, id: string): Promise<{ contact: string }> {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const row = await this.load(c, id, false);
       const sealed = (await c.query<{ sealed: Buffer }>("SELECT sealed FROM principal_contacts WHERE principal_id = $1", [row.principal_id])).rows[0];
       if (sealed === undefined) throw new GoneException({ error: "gone", message: "the contact was erased or was never captured" });
-      await this.audit.append(c, tenantId, { actorType: "dpo", actorId: `api-key:${keyId}`, action: "dsr.contact_revealed", refTable: "dsr_requests", refId: id, payloadSha256: payload(row, row.state, null) });
+      await this.audit.append(c, tenantId, { actorType: "dpo", actorId: actor, action: "dsr.contact_revealed", refTable: "dsr_requests", refId: id, payloadSha256: payload(row, row.state, null) });
       return { contact: decryptContact(this.keys.contactKey(), tenantId, row.principal_id, new Uint8Array(sealed.sealed)) };
     });
   }

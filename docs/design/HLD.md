@@ -60,7 +60,7 @@ flowchart LR
 | Nightly anchor job | not built | no | Reads a day's chain, builds the anchor, writes it to S3 with Object Lock. |
 | KMS key provider | not built | no | The development provider derives keys from one secret and refuses production. |
 | Rights requests (DSR) | `apps/api/src/dsr` | yes | State machine, SLA due dates, DPO queue, sealed contacts, erasure. See LLD section 9. |
-| Staff login with MFA | designed | no | See LLD section 10. |
+| Staff login with MFA | `apps/api/src/staff` | yes | Password, authenticator code, recovery codes, session tokens. See LLD section 10 and ADR 0004. |
 | DPO dashboard | designed | no | See LLD section 11. `apps/web` is a shell. |
 | ML service | `apps/ml` | shell | Health endpoint only. Translation is done offline (decision D10). |
 
@@ -106,7 +106,7 @@ The worker claims due rows (`SKIP LOCKED`, at most 20 per tenant per claim), sen
 
 | Boundary | Control |
 |---|---|
-| Internet to API | API key (HMAC-stored, constant-time), scopes, deny by default for every route, uniform 401, per-key origin lists, CORS that never allows cookies. No rate limiting yet. |
+| Internet to API | API key (HMAC-stored, constant-time) or staff session (password and authenticator code), scopes, deny by default for every route, uniform 401, per-key origin lists, CORS that never allows cookies. No rate limiting yet. |
 | Tenant to tenant | Row-level security with `FORCE` on every tenant-owned table, composite `(tenant_id, id)` foreign keys, a non-superuser application role, cross-tenant ids answer 404. Tests run as that role. |
 | API to database | One transaction per request, tenant set per transaction, least-privilege grants, append-only audit table, consent state machine in a trigger. |
 | API to tenant endpoints | https only, public addresses only (checked at registration and at connect time), no redirects, signed payloads with ids and states only. |
@@ -135,4 +135,4 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 - No rate limiting; no circuit breaker for failing webhook endpoints.
 - No nightly anchor job, no KMS provider, no deployment.
 - Hindi text is an unreviewed draft; the four further languages are not started.
-- Staff login and the dashboard are designed only.
+- The dashboard is designed only, and there is no tool or flow to create staff accounts, reset a password or reset an authenticator.

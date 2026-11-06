@@ -12,6 +12,8 @@ import { PrincipalService } from "./principals/principal.service.js";
 import { KEY_PROVIDER, createKeyProvider } from "./keys/key-provider.js";
 import { NoticesController } from "./notices/notices.controller.js";
 import { SETTINGS, readSettings, type Settings } from "./settings.js";
+import { AuthController } from "./staff/auth.controller.js";
+import { StaffService } from "./staff/staff.service.js";
 import { JwksController } from "./wellknown/jwks.controller.js";
 import { createHttpsClient } from "./webhooks/http-client.js";
 import { WebhookRunner } from "./webhooks/runner.js";
@@ -22,7 +24,7 @@ import { WebhookService } from "./webhooks/webhook.service.js";
 import { WebhookWorker } from "./webhooks/worker.js";
 
 @Module({
-  controllers: [DsrController, ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
+  controllers: [AuthController, DsrController, ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
   providers: [
     { provide: SETTINGS, useFactory: () => readSettings(process.env) },
     { provide: KEY_PROVIDER, useFactory: (settings: Settings) => createKeyProvider(settings), inject: [SETTINGS] },
@@ -31,6 +33,7 @@ import { WebhookWorker } from "./webhooks/worker.js";
     PrincipalService,
     ConsentService,
     DsrService,
+    StaffService,
     WebhookService,
     WebhookWorker,
     WebhookRunner,
