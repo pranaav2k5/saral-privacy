@@ -1,24 +1,41 @@
 @import "tailwindcss";
 
+/*
+ * Palette for the dashboard (same family as the public site). System fonts only: a privacy tool should not make
+ * third-party font requests. src/lib/tokens.ts holds these values and src/lib/tokens.test.ts checks their contrast
+ * (WCAG AA: 4.5 to 1 for text, 3 to 1 for field borders and focus rings) and that each one appears here.
+ */
+@theme {
+  --color-blotter: #eef2f4;
+  --color-sheet: #ffffff;
+  --color-ink: #1b2a41;
+  --color-ink-soft: #4a5a70;
+  --color-rule: #c9d3da;
+  --color-field: #6b7a8a;
+  --color-action: #0f5c6e;
+  --color-stamp: #a8321f;
+  --color-overdue-fg: #8a2415;
+  --color-overdue-bg: #fbeae7;
+  --color-ok-fg: #1d6236;
+  --color-ok-bg: #e4f1e8;
+  --color-soon-fg: #74460a;
+  --color-soon-bg: #fdf0d5;
+  --color-neutral-fg: #35435a;
+  --color-neutral-bg: #e3e9ee;
+  --font-ui: system-ui, -apple-system, "Segoe UI", "Noto Sans", "Noto Sans Devanagari", "Nirmala UI", sans-serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-blotter);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-action);
+  outline-offset: 2px;
 }
