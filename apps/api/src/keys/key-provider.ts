@@ -13,6 +13,8 @@ export interface KeyProvider {
   pseudonymKey(): Uint8Array;
   /** Server pepper for API key secrets. */
   apiKeyPepper(): Uint8Array;
+  /** Key that webhook signing secrets are derived from. */
+  webhookKey(): Uint8Array;
   receiptSigner(): ReceiptSigner;
   jwks(): { keys: JwkPublic[] };
 }
@@ -40,6 +42,7 @@ export async function createDevKeyProvider(masterSecret: string | undefined, nod
   const audit1 = derive(master, "audit-hmac-v1");
   const pseudonym = derive(master, "pseudonym-v1");
   const pepper = derive(master, "api-key-pepper-v1");
+  const webhook = derive(master, "webhook-secret-v1");
   const { signer, publicJwk } = await createLocalSigner();
   const jwks = buildJwks([publicJwk]);
   return {
@@ -47,6 +50,7 @@ export async function createDevKeyProvider(masterSecret: string | undefined, nod
     auditHmacKey: (version) => (version === 1 ? audit1 : undefined),
     pseudonymKey: () => pseudonym,
     apiKeyPepper: () => pepper,
+    webhookKey: () => webhook,
     receiptSigner: () => signer,
     jwks: () => jwks,
   };
@@ -62,6 +66,7 @@ const UNAVAILABLE: KeyProvider = {
   auditHmacKey: unavailable,
   pseudonymKey: unavailable,
   apiKeyPepper: unavailable,
+  webhookKey: unavailable,
   receiptSigner: unavailable,
   jwks: unavailable,
 };

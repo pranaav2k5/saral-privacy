@@ -19,6 +19,7 @@ tags:
   - name: Notices
   - name: Audit
   - name: Keys
+  - name: Webhooks
   - name: Operations
 paths:
   /healthz:
@@ -149,6 +150,63 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/webhook-endpoints:
+    post:
+      tags: [Webhooks]
+      operationId: createWebhookEndpoint
+      summary: Register a webhook endpoint
+      description: >-
+        The URL must be https on the standard port, with no credentials, and every address its host name resolves to
+        must be public (private, loopback, link-local and reserved addresses are refused, and checked again at every
+        delivery). A tenant may have at most 10 active endpoints. The signing secret is shown only in this response.
+        Creating an endpoint is an audit event.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri, maxLength: 500 }
+                events:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: { $ref: "#/components/schemas/WebhookEvent" }
+      responses:
+        "201":
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookEndpointWithSecret" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The tenant already has 10 active endpoints.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookEndpoints
+      summary: List the tenant's webhook endpoints
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: Endpoints, without secrets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WebhookEndpoint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/audit/verify:
     get:
       tags: [Audit]
@@ -197,6 +255,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+webhooks:
+  consentEvent:
+    post:
+      tags: [Webhooks]
+      operationId: receiveConsentEvent
+      summary: An event Saral sends to a registered endpoint
+      description: |
+        Delivery is at least once. Answer with any 2xx within 10 seconds; anything else (including a redirect, which is
+        not followed) is retried with exponential backoff and jitter, from about 10 seconds up to 6 hours between tries,
+        15 attempts in all. De-duplicate with the `Idempotency-Key` header, which is the delivery id.
+
+        Verify `X-Saral-Signature` (`t=<unix seconds>,v1=<hex>`): the value is the HMAC-SHA256, keyed with the endpoint's
+        signing secret (the bytes after `whsec_`, base64url), of the string `<t>.<raw request body>`. Reject the request if
+        `t` is more than 5 minutes from your clock. The header may carry several `v1` values during a secret rotation;
+        accept the request if any one matches. Payloads hold ids and states only, never a phone number or email.
+      parameters:
+        - { name: X-Saral-Signature, in: header, required: true, schema: { type: string } }
+        - { name: X-Saral-Event, in: header, required: true, schema: { $ref: "#/components/schemas/WebhookEvent" } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebhookDelivery" }
+      responses:
+        "200":
+          description: Received.
 components:
   securitySchemes:
     apiKey:
@@ -249,6 +334,38 @@ components:
         error: { type: string }
         message: { type: string }
         field: { type: string }
+    WebhookEvent:
+      enum: [consent.granted, consent.withdrawn]
+    WebhookEndpoint:
+      type: object
+      required: [id, url, events, createdAt, disabledAt]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/WebhookEvent" }
+        createdAt: { type: string, format: date-time }
+        disabledAt: { type: [string, "null"], format: date-time }
+    WebhookEndpointWithSecret:
+      allOf:
+        - { $ref: "#/components/schemas/WebhookEndpoint" }
+        - type: object
+          required: [secret]
+          properties:
+            secret: { type: string, pattern: '^whsec_[A-Za-z0-9_-]{43}$' }
+    WebhookDelivery:
+      type: object
+      required: [id, type, createdAt, data]
+      properties:
+        id: { type: string, format: uuid }
+        type: { $ref: "#/components/schemas/WebhookEvent" }
+        createdAt: { type: string, format: date-time }
+        data:
+          type: object
+          description: >-
+            For consent.granted: consentId, receiptId, noticeId, principalId (pseudonymous), collectionMethod, status
+            and purposes (key and granted). For consent.withdrawn: consentId, noticeId, principalId, status, withdrawnAt.
     Identifier:
       type: string
       description: An E.164 phone number (+919876543210) or an email address.

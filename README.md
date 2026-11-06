@@ -2,7 +2,7 @@
 
 A DPDP-native consent and privacy operations platform for Indian small and mid-sized businesses. Notice generation in Indian languages, consent capture with signed receipts, data-principal rights handling, records of processing, breach workflow, and a tamper-evident audit log.
 
-Status: **early build**. The plan is approved (its open decisions are still to be answered). Built and tested so far: the canonical string contract, the audit hash chain with Merkle anchors, signed consent receipts with a JWKS, and the free notice generator at `/notice-generator` in `apps/site` (English and Hindi drafts, pending legal and native-speaker review). The database schema with row-level security and the consent API (grant, withdraw, receipt, JWKS, audit verification; contract in `docs/design/openapi.yaml`) are built too. Not built yet: webhooks, the browser SDK, rights handling, staff login, and the dashboard. See `docs/PLAN.md` for the schedule.
+Status: **early build**. The plan is approved (its open decisions are still to be answered). Built and tested so far: the canonical string contract, the audit hash chain with Merkle anchors, signed consent receipts with a JWKS, and the free notice generator at `/notice-generator` in `apps/site` (English and Hindi drafts, pending legal and native-speaker review). The database schema with row-level security and the consent API (grant, withdraw, receipt, JWKS, audit verification; contract in `docs/design/openapi.yaml`) are built too. Signed, retried webhooks are built too. Not built yet: the browser SDK, rights handling, staff login, and the dashboard. See `docs/PLAN.md` for the schedule.
 
 Key date: the Digital Personal Data Protection Act's full compliance deadline is **13 May 2027**.
 

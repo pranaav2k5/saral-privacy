@@ -44,6 +44,23 @@ export class Database implements OnModuleDestroy {
     }
   }
 
+  /** Runs `fn` as the delivery worker role, which sees due webhook deliveries of every tenant and nothing else. */
+  async asWorker<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.getPool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE saral_worker");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.pool?.end();
   }
