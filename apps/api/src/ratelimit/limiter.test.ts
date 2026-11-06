@@ -85,6 +85,32 @@ describe("FixedWindowLimiter", () => {
     expect(limiter.hit("live", 1, 60_000).allowed).toBe(false);
   });
 
+  test("a key whose window was renewed counts as recent, so a busy key is not dropped before an idle one", () => {
+    const { limiter, advance } = setup(2);
+    limiter.hit("busy", 1, 1000);
+    limiter.hit("idle", 1, 60_000);
+    advance(1000);
+    expect(limiter.hit("busy", 1, 1000).allowed).toBe(true); // its window renewed
+    limiter.hit("new", 1, 60_000); // the table is full: the oldest is dropped, and that is "idle"
+    expect(limiter.hit("busy", 1, 1000).allowed).toBe(false); // still counted
+    expect(limiter.hit("idle", 1, 60_000).allowed).toBe(true); // forgotten
+  });
+
+  test("a flood of new keys does not make every request scan the whole table: expired keys are swept at most once a second", () => {
+    const { limiter, advance } = setup(50);
+    for (let i = 0; i < 50; i++) limiter.hit(`live${String(i)}`, 1, 600_000);
+    const before = limiter.sweeps;
+    for (let i = 0; i < 500; i++) limiter.hit(`flood${String(i)}`, 1, 600_000);
+    expect(limiter.sweeps - before).toBe(1);
+    advance(999);
+    limiter.hit("soon", 1, 600_000);
+    expect(limiter.sweeps - before).toBe(1);
+    advance(1);
+    limiter.hit("later", 1, 600_000);
+    expect(limiter.sweeps - before).toBe(2);
+    expect(limiter.size).toBe(50);
+  });
+
   test("when full, an expired key is removed before a live one, even if the live one is older", () => {
     const { limiter, advance } = setup(2);
     limiter.hit("live", 1, 60_000);

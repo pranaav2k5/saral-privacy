@@ -117,14 +117,26 @@ describe("every route", () => {
 });
 
 describe("a key", () => {
-  test("is limited however many addresses it is used from, and other keys are not affected", async () => {
+  test("a secret key is limited however many addresses it is used from, and other keys are not affected", async () => {
     const use = (key: string) => api.http().post("/v1/consents").set("X-Forwarded-For", from()).set("Authorization", `Bearer ${key}`).send({});
-    for (let i = 0; i < 4; i++) expect((await use(api.A.pk)).status).toBe(400);
-    const res = await use(api.A.pk);
+    for (let i = 0; i < 4; i++) expect((await use(api.A.server)).status).toBe(400);
+    const res = await use(api.A.server);
     expect(res.status).toBe(429);
     expect(res.body.error).toBe("rate_limited");
-    expect((await use(api.B.pk)).status).toBe(400);
-    expect((await use(api.A.server)).status).toBe(400);
+    expect((await use(api.B.server)).status).toBe(400);
+    expect((await use(api.A.pk)).status).toBe(400);
+  });
+
+  test("a publishable key is public, so it is not limited as a whole: someone who copies it from a web page cannot use it to lock the site's own visitors out", async () => {
+    const use = (ip: string) => api.http().post("/v1/consents").set("X-Forwarded-For", ip).set("Authorization", `Bearer ${api.A.pk}`).send({});
+    // More requests than the per-key limit allows, each from a different address: none is refused.
+    for (let i = 0; i < 12; i++) expect((await use(from())).status).toBe(400);
+    // One address is still limited by its own address limit.
+    const noisy = from();
+    for (let i = 0; i < 5; i++) expect((await use(noisy)).status).toBe(400);
+    expect((await use(noisy)).status).toBe(429);
+    // A visitor from another address is unaffected.
+    expect((await use(from())).status).toBe(400);
   });
 
   test("starts again when the minute is over", async () => {

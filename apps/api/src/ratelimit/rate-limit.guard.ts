@@ -26,15 +26,20 @@ export class IpRateLimitGuard implements CanActivate {
     const http = context.switchToHttp();
     const res = http.getResponse<Res>();
     const who = clientKey(http.getRequest<Req>().ip);
-    this.limits.check(res, `ip:${who}`, this.limits.limits.ip);
+    this.limits.check(res, "ip", who);
     if (this.reflector.getAllAndOverride<string | undefined>(THROTTLE_KEY, targets) === "auth") {
-      this.limits.check(res, `auth:${who}`, this.limits.limits.auth);
+      this.limits.check(res, "auth", who);
     }
     return true;
   }
 }
 
-/** Runs after authentication: one key or one staff session is limited wherever it is used from. Requests that failed to authenticate never get here. */
+/**
+ * Runs after authentication: one secret key or one staff session is limited wherever it is used from. Requests that failed to
+ * authenticate never get here. A publishable key is not limited as a whole. It is public, in every visitor's browser, so
+ * anyone could use it to exhaust the allowance and lock the tenant's own visitors out. Each address is limited on its own
+ * by `IpRateLimitGuard`.
+ */
 @Injectable()
 export class PrincipalRateLimitGuard implements CanActivate {
   constructor(private readonly limits: RateLimitService) {}
@@ -42,7 +47,7 @@ export class PrincipalRateLimitGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const http = context.switchToHttp();
     const auth = http.getRequest<Req>().auth;
-    if (auth !== undefined) this.limits.check(http.getResponse<Res>(), `principal:${auth.keyId}`, this.limits.limits.principal);
+    if (auth !== undefined && auth.kind !== "publishable") this.limits.check(http.getResponse<Res>(), "principal", auth.keyId);
     return true;
   }
 }

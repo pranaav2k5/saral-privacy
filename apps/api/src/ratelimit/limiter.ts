@@ -9,13 +9,21 @@ export interface Verdict {
   retryAfterSec: number;
 }
 
+/** The most often the whole table is scanned for expired keys. Scanning on every insert would let a flood of new keys make each request cost the size of the table. */
+const SWEEP_EVERY_MS = 1000;
+
 /**
  * Counts hits per key in fixed windows. The state is in this process only, so with several instances each one counts
  * separately and a caller can get up to that many times the limit. Memory is bounded: when the table is full, expired
- * keys go first and then the oldest key, so a flood of different keys cannot grow it without limit.
+ * keys go first (swept at most once a second) and then the oldest key, so a flood of different keys cannot grow it without
+ * limit. A key whose window is renewed counts as newly used. Whoever can fill the table with keys of their own can make it
+ * forget other keys' counts, so keep different kinds of key in different tables.
  */
 export class FixedWindowLimiter {
   private readonly windows = new Map<string, Window>();
+  private lastSweep = Number.NEGATIVE_INFINITY;
+  /** How many times the whole table has been scanned for expired keys. */
+  sweeps = 0;
 
   constructor(
     private readonly now: () => number,
@@ -31,6 +39,7 @@ export class FixedWindowLimiter {
     let w = this.windows.get(key);
     if (w === undefined || t >= w.resetAt) {
       if (w === undefined) this.makeRoom(t);
+      else this.windows.delete(key); // so that insertion order follows when a key was last used
       w = { count: 0, resetAt: t + windowMs };
       this.windows.set(key, w);
     }
@@ -41,7 +50,11 @@ export class FixedWindowLimiter {
 
   private makeRoom(t: number): void {
     if (this.windows.size < this.maxKeys) return;
-    for (const [k, w] of this.windows) if (t >= w.resetAt) this.windows.delete(k);
+    if (t - this.lastSweep >= SWEEP_EVERY_MS) {
+      this.lastSweep = t;
+      this.sweeps++;
+      for (const [k, w] of this.windows) if (t >= w.resetAt) this.windows.delete(k);
+    }
     while (this.windows.size >= this.maxKeys) {
       const oldest = this.windows.keys().next();
       if (oldest.done) break;
