@@ -23,6 +23,7 @@ tags:
   - name: Audit
   - name: Keys
   - name: Webhooks
+  - name: Rights requests
   - name: Operations
 paths:
   /healthz:
@@ -321,6 +322,158 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/dsr:
+    post:
+      tags: [Rights requests]
+      operationId: submitRightsRequest
+      summary: A person asks for access, correction, erasure, nomination, or to complain
+      description: >-
+        The answer is the same whether or not the person is already known, so it cannot be used to find out who is a
+        customer. The person's phone number or email address is kept only sealed (AES-256-GCM) so the data protection
+        officer can answer; it is never in audit entries or webhooks. The request is due 30 days after it is submitted (a
+        working default, not yet confirmed against the Rules). Submitting is an audit event and queues `dsr.submitted`.
+      x-scopes: [sdk]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, identifier]
+              properties:
+                type: { $ref: "#/components/schemas/RightsType" }
+                identifier: { $ref: "#/components/schemas/Identifier" }
+                details: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Submitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RightsRequest" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      tags: [Rights requests]
+      operationId: listRightsRequests
+      summary: The data protection officer's queue
+      description: Soonest due first, with the details the person wrote. `overdue` lists open requests past their due date.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { name: state, in: query, required: false, schema: { $ref: "#/components/schemas/RightsState" } }
+        - { name: overdue, in: query, required: false, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Requests of the tenant.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RightsRequestWithDetails" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/dsr/{id}:
+    get:
+      tags: [Rights requests]
+      operationId: getRightsRequest
+      summary: One rights request
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RightsRequestWithDetails" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/dsr/{id}/transition:
+    post:
+      tags: [Rights requests]
+      operationId: transitionRightsRequest
+      summary: Move a request to its next state
+      description: >-
+        Legal moves: submitted to identity_pending, in_review or rejected; identity_pending to in_review or rejected;
+        in_review to fulfilled or rejected; fulfilled or rejected to closed. A rejection needs a reason. Fulfilling an
+        **erasure** request, in the same transaction, withdraws the person's consents, deletes the sealed contact, and
+        replaces their pseudonym so their identifier no longer leads to them; the audit chain stays intact. Every move is
+        an audit event and queues `dsr.transitioned`. Whether this erasure design satisfies the Act is a question for the
+        lawyer advisor.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { $ref: "#/components/schemas/RightsState" }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Moved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RightsRequestWithDetails" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: That move is not allowed from the current state. `allowed` lists the moves that are.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, from, to, allowed, message]
+                properties:
+                  error: { const: illegal_transition }
+                  from: { $ref: "#/components/schemas/RightsState" }
+                  to: { $ref: "#/components/schemas/RightsState" }
+                  allowed:
+                    type: array
+                    items: { $ref: "#/components/schemas/RightsState" }
+                  message: { type: string }
+  /v1/dsr/{id}/reveal-contact:
+    post:
+      tags: [Rights requests]
+      operationId: revealRightsContact
+      summary: Show the person's phone number or email address to the data protection officer
+      description: Every read is an audit event (`dsr.contact_revealed`) that names the key that read it. 410 after the contact was erased.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The contact.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [contact]
+                properties:
+                  contact: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The contact was erased or was never captured.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/audit/verify:
     get:
       tags: [Audit]
@@ -456,7 +609,7 @@ components:
         message: { type: string }
         field: { type: string }
     WebhookEvent:
-      enum: [consent.granted, consent.withdrawn]
+      enum: [consent.granted, consent.withdrawn, dsr.submitted, dsr.transitioned]
     WebhookEndpoint:
       type: object
       required: [id, url, events, createdAt, disabledAt]
@@ -487,6 +640,30 @@ components:
           description: >-
             For consent.granted: consentId, receiptId, noticeId, principalId (pseudonymous), collectionMethod, status
             and purposes (key and granted). For consent.withdrawn: consentId, noticeId, principalId, status, withdrawnAt.
+            For dsr.submitted: requestId, type, state, dueAt, principalId. For dsr.transitioned: requestId, type, from, state,
+            dueAt. Never the person's text or contact.
+    RightsType:
+      enum: [access, correction, erasure, nomination, grievance]
+    RightsState:
+      enum: [submitted, identity_pending, in_review, fulfilled, rejected, closed]
+    RightsRequest:
+      type: object
+      required: [id, type, state, submittedAt, dueAt, overdue, decidedReason, closedAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { $ref: "#/components/schemas/RightsType" }
+        state: { $ref: "#/components/schemas/RightsState" }
+        submittedAt: { type: string, format: date-time }
+        dueAt: { type: string, format: date-time }
+        overdue: { type: boolean }
+        decidedReason: { type: [string, "null"] }
+        closedAt: { type: [string, "null"], format: date-time }
+    RightsRequestWithDetails:
+      allOf:
+        - { $ref: "#/components/schemas/RightsRequest" }
+        - type: object
+          properties:
+            details: { type: [string, "null"] }
     Identifier:
       type: string
       description: An E.164 phone number (+919876543210) or an email address.

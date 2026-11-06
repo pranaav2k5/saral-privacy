@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { sha256Hex } from "@saral/audit-chain";
 import { ReceiptError, buildReceiptClaims, signReceipt, type PiiController, type ReceiptPurpose } from "@saral/receipts";
 import { canonicalConsentRecord, type CollectionMethod, type ConsentFields, type PurposeGrant } from "@saral/schemas";
@@ -8,6 +8,7 @@ import { AuditService } from "../audit/audit.service.js";
 import type { ApiKeyKind } from "../auth/api-keys.js";
 import { Database } from "../db/database.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
+import { PrincipalService } from "../principals/principal.service.js";
 import { SETTINGS, type Settings } from "../settings.js";
 import { receiptPolicyUrl } from "./policy-url.js";
 import { WebhookService } from "../webhooks/webhook.service.js";
@@ -65,13 +66,13 @@ export class ConsentService {
     private readonly db: Database,
     private readonly audit: AuditService,
     private readonly webhooks: WebhookService,
+    private readonly principals: PrincipalService,
     @Inject(KEY_PROVIDER) private readonly keys: KeyProvider,
     @Inject(SETTINGS) private readonly settings: Settings,
   ) {}
 
-  /** Keyed HMAC of the person's identifier and the tenant (decision D12). Tenant-scoped, so tenants cannot link people. */
   pseudonym(identifier: string, tenantId: string): string {
-    return createHmac("sha256", this.keys.pseudonymKey()).update(JSON.stringify(["saral.principal", identifier, tenantId])).digest("hex");
+    return this.principals.pseudonym(identifier, tenantId);
   }
 
   /** `reused` is true when the request repeats an earlier one (same Idempotency-Key) and the first result is returned unchanged. */
@@ -99,7 +100,7 @@ export class ConsentService {
       // Serialise grants for the tenant before looking for an earlier request with the same key, so two retries at the
       // same moment cannot both miss each other and record twice.
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
-      const principalId = await this.principal(c, tenantId, pseudonym);
+      const principalId = await this.principals.findOrCreate(c, tenantId, pseudonym);
       // A retry carrying the same random key returns the first result. Nothing else is ever recognised: matching on the
       // identifier alone would hand a stranger who knows it a stored receipt, and tell them the person is a customer.
       if (input.idempotencyKey !== undefined) {
@@ -163,14 +164,6 @@ export class ConsentService {
     });
   }
 
-  private async principal(c: pg.PoolClient, tenantId: string, pseudonym: string): Promise<string> {
-    const existing = await c.query<{ id: string }>("SELECT id FROM tenant_principals WHERE pseudonym_hmac = $1", [pseudonym]);
-    if (existing.rows[0]) return existing.rows[0].id;
-    const id = randomUUID();
-    await c.query("INSERT INTO tenant_principals (tenant_id, id, pseudonym_hmac) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, pseudonym_hmac) DO NOTHING", [tenantId, id, pseudonym]);
-    return (await c.query<{ id: string }>("SELECT id FROM tenant_principals WHERE pseudonym_hmac = $1", [pseudonym])).rows[0]?.id as string;
-  }
-
   /** Moves one granted consent to withdrawn, appends its audit entry and queues its webhook. Runs inside the caller's transaction. */
   private async finish(c: pg.PoolClient, tenantId: string, row: ConsentRow, withdrawnAt: Date): Promise<void> {
     await c.query("UPDATE consent_records SET status = 'withdrawn', withdrawn_at = $2 WHERE id = $1", [row.id, withdrawnAt]);
@@ -182,6 +175,15 @@ export class ConsentService {
     await this.webhooks.enqueue(c, tenantId, "consent.withdrawn", {
       consentId: row.id, noticeId: row.notice_id, principalId: row.principal_id, status: "withdrawn", withdrawnAt: after.withdrawnAt as string,
     });
+  }
+
+  /** Withdraws every granted consent of one person, inside the caller's transaction (used when an erasure request is fulfilled). */
+  async withdrawAllForPrincipal(c: pg.PoolClient, tenantId: string, principalId: string, at: Date): Promise<number> {
+    const rows = (await c.query<ConsentRow>(
+      `SELECT r.*, p.pseudonym_hmac FROM consent_records r JOIN tenant_principals p ON p.tenant_id = r.tenant_id AND p.id = r.principal_id
+       WHERE r.principal_id = $1 AND r.status = 'granted' ORDER BY r.granted_at FOR UPDATE OF r`, [principalId])).rows;
+    for (const row of rows) await this.finish(c, tenantId, row, at);
+    return rows.length;
   }
 
   /** Withdraws a consent by id. The caller must prove they are the person: a wrong identifier looks the same as an unknown consent. */

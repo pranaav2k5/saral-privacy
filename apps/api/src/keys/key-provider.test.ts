@@ -16,9 +16,9 @@ describe("dev key provider", () => {
     const a = await createDevKeyProvider(MASTER, "development");
     const b = await createDevKeyProvider(MASTER, "development");
     expect(Buffer.from(a.auditHmacKey(1) as Uint8Array).toString("hex")).toBe(Buffer.from(b.auditHmacKey(1) as Uint8Array).toString("hex"));
-    const keys = [a.auditHmacKey(1), a.pseudonymKey(), a.apiKeyPepper(), a.webhookKey()].map((k) => Buffer.from(k as Uint8Array).toString("hex"));
-    expect(new Set(keys).size).toBe(4);
-    for (const k of [a.auditHmacKey(1), a.pseudonymKey(), a.apiKeyPepper(), a.webhookKey()]) expect((k as Uint8Array).length).toBe(32);
+    const keys = [a.auditHmacKey(1), a.pseudonymKey(), a.apiKeyPepper(), a.webhookKey(), a.contactKey()].map((k) => Buffer.from(k as Uint8Array).toString("hex"));
+    expect(new Set(keys).size).toBe(5);
+    for (const k of [a.auditHmacKey(1), a.pseudonymKey(), a.apiKeyPepper(), a.webhookKey(), a.contactKey()]) expect((k as Uint8Array).length).toBe(32);
   });
 
   test("a different master secret gives different keys", async () => {
@@ -58,6 +58,7 @@ describe("createKeyProvider", () => {
     expect(() => p.jwks()).toThrow(/no key provider/);
     expect(() => p.auditHmacKey(1)).toThrow(/no key provider/);
     expect(() => p.webhookKey()).toThrow(/no key provider/);
+    expect(() => p.contactKey()).toThrow(/no key provider/);
   });
 
   test("outside production it is the dev provider", async () => {
