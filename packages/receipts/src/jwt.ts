@@ -31,7 +31,7 @@ const MIN_MODULUS_BITS = 2048;
 const MIN_EXPONENT = 65537n;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 /** A receipt is a few KiB. Reject anything larger before parsing it. */
-const MAX_TOKEN_CHARS = 16 * 1024;
+export const MAX_TOKEN_CHARS = 16 * 1024;
 
 const b64u = (v: Uint8Array | string): string => Buffer.from(v).toString("base64url");
 

@@ -1,7 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { canonicalNoticeText, renderNotice, validateNoticeInput, type NoticeLanguage } from "@saral/notice";
-import type { PurposeDefinition } from "../consent/consent.service.js";
+import type { PurposeDefinition } from "../consent/receipt-mapping.js";
 
 export const LANGUAGES: readonly NoticeLanguage[] = ["en", "hi"];
 const TOP = ["language", "notice", "purposes"];

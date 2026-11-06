@@ -22,6 +22,7 @@ The integrity of the notice text that every consent receipt points to, the audit
 | Repudiation | A publication cannot be traced to who made it. | `notice.published` is an audit event with the actor, the notice id, the version and the hash. | `notices-publish.e2e.test.ts` |
 | Tampering | Two simultaneous publications get the same version, or the list order disagrees with the versions. | Publication runs under the per-organisation lock, takes the next version inside it, and stamps the time inside it. | `notices-publish.e2e.test.ts` (ten at once) |
 | Information disclosure | Error messages echo what was submitted. | Messages are fixed text naming the field. | `notices-publish.e2e.test.ts` |
+| Denial of service (of consent capture) | A notice is published whose largest receipt exceeds the 16 KiB limit, so every consent that grants all of it fails. | The size of the largest possible receipt is measured at publication (with room for the signature) and the notice is refused with 422 `receipt_too_large`. Not measured while the organisation has no receipt profile; grants then fail with `incomplete_setup`, which names the cause. | `notices-publish.e2e.test.ts` (a search for the exact limit, then a consent in full at that size) |
 | Denial of service | A caller floods the organisation with notices. | Only an administrator can publish, each publication is audited, and the body size is limited. There is no cap or rate limit yet. | Residual risk |
 
 ## Residual risk

@@ -96,6 +96,15 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: >-
+            `receipt_too_large`: a receipt that grants every purpose would be over the 16384-character limit of a
+            receipt (the estimate counts the organisation's receipt profile and leaves room for the signature), so
+            every consent that grants all of it would fail. Use fewer or shorter purposes and categories. Not checked
+            until the organisation has a receipt profile.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     get:
       tags: [Notices]
       operationId: listNotices

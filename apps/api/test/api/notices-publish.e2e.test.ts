@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { issueApiKey } from "../../src/auth/api-keys.js";
 import { startApi, type Api, type Tenant } from "./harness.js";
 
 let api: Api;
@@ -229,5 +230,79 @@ describe("GET /v1/notices", () => {
     expect((await api.http().get("/v1/notices").set("Authorization", `Bearer ${api.A.pk}`)).status).toBe(403);
     expect((await api.http().get("/v1/notices").set("Authorization", `Bearer ${api.A.dpo}`)).status).toBe(403);
     expect((await api.http().get("/v1/notices")).status).toBe(401);
+  });
+});
+
+describe("the size of the receipts a notice would produce", () => {
+  // A receipt is limited to 16 KiB. One that grants every purpose is the largest the notice can make.
+  const wide = (n: number) =>
+    Array.from({ length: n }, (_v, i) => ({
+      ...MARKETING,
+      key: `purpose_${String(i)}`,
+      name: `Purpose number ${String(i)}`,
+      purposeCategory: Array.from({ length: 10 }, (_w, j) => `${"c".repeat(95)}${String(j)}`),
+      piiCategory: Array.from({ length: 10 }, (_w, j) => `${"d".repeat(95)}${String(j)}`),
+    }));
+
+  const items = (chars: number) => {
+    const out: string[] = [];
+    for (let left = chars; left > 0; left -= 100) out.push("p".repeat(Math.min(100, left)));
+    return out.length > 0 ? out : ["p"];
+  };
+  /** Four wide purposes and a fifth whose categories total `chars` characters: the notice grows one character at a time. */
+  const sized = (chars: number) => [
+    ...wide(4),
+    { ...MARKETING, key: "last", name: "Last purpose", purposeCategory: items(Math.min(chars, 1000)), piiCategory: items(Math.max(chars - 1000, 1)) },
+  ];
+
+  test("the largest notice accepted yields a receipt just under the limit, and one character more is refused", async () => {
+    // A notice is accepted exactly when a receipt granting every purpose fits, so search for where that stops.
+    let accepted = 1;
+    let refused = 2000;
+    let lastId = "";
+    let refusals = 0;
+    expect((await publish(api.A, body({ purposes: sized(1) }))).status).toBe(201);
+    while (refused - accepted > 1) {
+      const mid = Math.floor((accepted + refused) / 2);
+      const res = await publish(api.A, body({ purposes: sized(mid) }));
+      if (res.status === 201) {
+        accepted = mid;
+        lastId = res.body.id as string;
+      } else {
+        expect(res.status).toBe(422);
+        expect(res.body.error).toBe("receipt_too_large");
+        expect(res.body.message).toMatch(/16384/);
+        refused = mid;
+        refusals++;
+      }
+    }
+    // The limit really was reached inside the range searched, so the checks below are about the limit and not about the range.
+    expect(refusals).toBeGreaterThan(0);
+    expect(accepted).toBeGreaterThan(1000);
+    expect(lastId).not.toBe("");
+    const grant = await api.grant(api.A, { noticeId: lastId, purposes: sized(accepted).map((p) => ({ key: p.key, granted: true })) });
+    expect(grant.status).toBe(201);
+    // Not under-counted (the receipt was issued) and not over-counted by much (it is within about a thousand characters of the limit).
+    const length = (grant.body.receipt as string).length;
+    expect(length).toBeLessThanOrEqual(16384);
+    expect(length).toBeGreaterThan(16384 - 1200);
+  });
+
+  test("a refused notice is not stored and is not an audit event", async () => {
+    const before = await count(api.A);
+    const audits = async () => ((await rows("SELECT count(*)::int AS n FROM consent_audit_log WHERE tenant_id = $1 AND action = 'notice.published'", [api.A.id]))[0] as { n: number }).n;
+    const logged = await audits();
+    const res = await publish(api.A, body({ purposes: wide(30) }));
+    expect(res.status).toBe(422);
+    expect(await count(api.A)).toBe(before);
+    expect(await audits()).toBe(logged);
+  });
+
+  test("an organisation that has no receipt profile yet can still publish, because there is nothing to measure against", async () => {
+    const id = randomUUID();
+    await api.db.owner.query("INSERT INTO tenants (id, name, slug) VALUES ($1, 'No Profile Org', $2)", [id, `no-profile-${id.slice(0, 8)}`]);
+    const { token } = await issueApiKey(api.db.owner, api.keys.apiKeyPepper(), { tenantId: id, kind: "secret", scopes: ["tenant_admin"], name: "admin" });
+    const res = await api.http().post("/v1/notices").set("Authorization", `Bearer ${token}`).send(body({ purposes: wide(30) }));
+    expect(res.status).toBe(201);
   });
 });
