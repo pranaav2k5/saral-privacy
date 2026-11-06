@@ -16,5 +16,8 @@
   },
   "devDependencies": {
     "jose": "^5.10.0"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

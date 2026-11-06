@@ -1,0 +1,349 @@
+openapi: 3.1.0
+info:
+  title: Saral Privacy API
+  version: 0.1.0
+  summary: Consent capture, signed receipts, and the audit log.
+  description: |
+    Authentication: send an API key as `Authorization: Bearer <key>`. A publishable key (`pk_...`, scope `sdk`) is safe
+    to ship in a browser and may be restricted to origins. A secret key (`sk_...`) carries one or more of the scopes
+    `tenant_admin`, `dpo` and `auditor` and must stay on a server. Every request is limited to the key's tenant.
+
+    Failures to authenticate all return the same 401 body. A request for another tenant's data returns 404, never 403.
+
+    Rate limits are not built yet.
+servers:
+  - url: http://localhost:4000
+    description: Local development
+tags:
+  - name: Consents
+  - name: Notices
+  - name: Audit
+  - name: Keys
+  - name: Operations
+paths:
+  /healthz:
+    get:
+      tags: [Operations]
+      operationId: health
+      summary: Liveness
+      x-access: public
+      responses:
+        "200":
+          description: The process is up. This does not check the database.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { const: ok }
+  /.well-known/jwks.json:
+    get:
+      tags: [Keys]
+      operationId: jwks
+      summary: Public keys that verify consent receipts
+      x-access: public
+      responses:
+        "200":
+          description: A JSON Web Key Set with public members only. May be cached for 5 minutes.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: "public, max-age=300" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Jwks" }
+  /v1/notices/{id}:
+    get:
+      tags: [Notices]
+      operationId: getNotice
+      summary: A published privacy notice
+      description: Public by design. The URL is what a receipt points to.
+      x-access: public
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The notice text exactly as hashed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Notice" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/consents:
+    post:
+      tags: [Consents]
+      operationId: grantConsent
+      summary: Record a consent and get a signed receipt
+      description: |
+        Retention and receipt details come from the notice's purpose definitions, never from the request. At least one
+        purpose must be granted. The person is identified by a phone number or email address that is turned into a
+        keyed HMAC and then discarded; it is never stored or logged.
+      x-scopes: [sdk]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantRequest" }
+      responses:
+        "201":
+          description: Recorded. `receipt` is a Kantara KI-CR-v1.1.0 receipt as an RS256 JWT.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/consents/{id}/withdraw:
+    post:
+      tags: [Consents]
+      operationId: withdrawConsent
+      summary: Withdraw a consent
+      description: The caller proves who they are with the same identifier. A wrong identifier looks the same as an unknown consent (404).
+      x-scopes: [sdk]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { $ref: "#/components/schemas/Identifier" }
+      responses:
+        "200":
+          description: Withdrawn.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WithdrawResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The consent is already withdrawn or expired.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/consents/{id}/receipt:
+    get:
+      tags: [Consents]
+      operationId: getReceipt
+      summary: The receipt of a consent
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The receipt issued when the consent was recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantResponseWithoutStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/audit/verify:
+    get:
+      tags: [Audit]
+      operationId: verifyAudit
+      summary: Recompute the tenant's audit hash chain
+      description: >-
+        Verifies the whole chain, or one UTC day when `date` is given. When the chain does not verify the result has
+        `ok` set to false and names the first failing entry. A chain that does not verify is not an HTTP error.
+      x-scopes: [auditor]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Date" }
+      responses:
+        "200":
+          description: The verification result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/VerifyOk" }
+                  - { $ref: "#/components/schemas/VerifyFailed" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/audit/merkle-root:
+    get:
+      tags: [Audit]
+      operationId: getAnchor
+      summary: The anchor for one UTC day
+      x-scopes: [auditor]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Date" }
+      responses:
+        "200":
+          description: Count, head hash and Merkle root of the day's entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Anchor" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The day's chain does not verify, so no anchor is given.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      description: A publishable (`pk_...`) or secret (`sk_...`) API key.
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Date:
+      name: date
+      in: query
+      required: false
+      description: A UTC calendar day, YYYY-MM-DD.
+      schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+  responses:
+    BadRequest:
+      description: The request is malformed. `field` names the problem.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing, malformed, unknown, wrong or revoked key. Always the same body.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The key is valid but lacks the scope, or is used from an origin it is not allowed from.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found, or belongs to another tenant.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: The notice does not define a purpose, nothing was granted, or the tenant profile is incomplete.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [message]
+      properties:
+        error: { type: string }
+        message: { type: string }
+        field: { type: string }
+    Identifier:
+      type: string
+      description: An E.164 phone number (+919876543210) or an email address.
+    GrantRequest:
+      type: object
+      required: [noticeId, identifier, purposes]
+      properties:
+        noticeId: { type: string, format: uuid }
+        identifier: { $ref: "#/components/schemas/Identifier" }
+        purposes:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            required: [key, granted]
+            properties:
+              key: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' }
+              granted: { type: boolean }
+    GrantResponse:
+      type: object
+      required: [consentId, receiptId, receipt, status]
+      properties:
+        consentId: { type: string, format: uuid }
+        receiptId: { type: string, format: uuid }
+        receipt: { type: string, description: A compact JWS (RS256). }
+        status: { const: granted }
+    GrantResponseWithoutStatus:
+      type: object
+      required: [consentId, receiptId, receipt]
+      properties:
+        consentId: { type: string, format: uuid }
+        receiptId: { type: string, format: uuid }
+        receipt: { type: string }
+    WithdrawResponse:
+      type: object
+      required: [consentId, status, withdrawnAt]
+      properties:
+        consentId: { type: string, format: uuid }
+        status: { const: withdrawn }
+        withdrawnAt: { type: string, format: date-time }
+    Notice:
+      type: object
+      required: [id, version, language, canonicalText, canonicalSha256, reviewStatus, publishedAt]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer }
+        language: { type: string }
+        canonicalText: { type: string }
+        canonicalSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        reviewStatus: { enum: [pending-human-review, reviewed] }
+        publishedAt: { type: string, format: date-time }
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, n, e, kid, alg, use]
+            properties:
+              kty: { const: RSA }
+              n: { type: string }
+              e: { type: string }
+              kid: { type: string }
+              alg: { const: RS256 }
+              use: { const: sig }
+    VerifyOk:
+      type: object
+      required: [ok, count, headHash, firstSeqNo, lastSeqNo, merkleRoot]
+      properties:
+        ok: { const: true }
+        count: { type: integer }
+        headHash: { type: string }
+        firstSeqNo: { type: [string, "null"] }
+        lastSeqNo: { type: [string, "null"] }
+        merkleRoot: { type: string }
+    VerifyFailed:
+      type: object
+      required: [ok, failure, seqNo]
+      properties:
+        ok: { const: false }
+        failure:
+          enum: [hash_mismatch, prev_mismatch, seq_gap, unknown_key, key_version_regression, unsupported_version, invalid_fields, tenant_mismatch]
+        seqNo: { type: string }
+    Anchor:
+      type: object
+      required: [version, tenantId, date, count, firstSeqNo, lastSeqNo, headHash, merkleRoot]
+      properties:
+        version: { const: 1 }
+        tenantId: { type: string, format: uuid }
+        date: { type: string }
+        count: { type: integer }
+        firstSeqNo: { type: string }
+        lastSeqNo: { type: string }
+        headHash: { type: string }
+        merkleRoot: { type: string }
