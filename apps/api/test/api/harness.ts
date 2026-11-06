@@ -37,7 +37,7 @@ export const DEFINITIONS = [
   },
 ];
 
-const PROFILE = {
+export const PROFILE = {
   controller: {
     piiController: "Example Controller Pvt Ltd",
     contact: "Grievance Officer",
