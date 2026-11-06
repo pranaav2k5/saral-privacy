@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 import { ReceiptError, buildReceiptClaims, type PiiController } from "@saral/receipts";
 import type pg from "pg";
 import { issueApiKey, type ApiKeyKind, type Scope } from "../auth/api-keys.js";
@@ -112,8 +113,22 @@ export async function enableStaff(client: pg.ClientBase, keys: KeyProvider, inpu
 }
 
 const SCOPES: readonly Scope[] = ["sdk", "tenant_admin", "dpo", "auditor"];
-/** What a browser sends as `Origin`: lowercase scheme and host, no path. Plain http is only for local development. */
-const ORIGIN = /^(https:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?|http:\/\/localhost(:\d{1,5})?)$/;
+/**
+ * The origin a browser sends for a page: lowercase scheme and host, no default port, no path. Returns null for anything that
+ * is not an origin of that kind. Plain http is only for local development. Wildcards are never allowed.
+ */
+function canonicalOrigin(raw: string): string | null {
+  if (!/^https?:\/\//.test(raw) || raw.includes("?") || raw.includes("#")) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.username !== "" || u.password !== "" || u.pathname !== "/" || u.hostname.includes("*")) return null;
+  if (u.protocol === "https:" || (u.protocol === "http:" && u.hostname === "localhost")) return u.origin;
+  return null;
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface IssuedKey {
@@ -143,11 +158,13 @@ export async function issueKey(
   let origins: string[] = [];
   if (input.origins !== undefined) {
     if (kind === "secret") throw new OperatorError("Allowed origins are for publishable keys only.");
-    origins = [...new Set(input.origins.split(","))];
-    const wrong = origins.find((o) => !ORIGIN.test(o));
+    const given = input.origins.split(",");
+    const canonical = given.map(canonicalOrigin);
+    const wrong = given.find((_o, i) => canonical[i] === null);
     if (wrong !== undefined) {
-      throw new OperatorError(`"${wrong}" is not an allowed origin. Use https://host, or http://localhost for development, in lowercase, with no path or wildcard.`);
+      throw new OperatorError(`"${wrong}" is not an allowed origin. Use https://host, or http://localhost for development, with no path, query or wildcard.`);
     }
+    origins = [...new Set(canonical as string[])];
   }
   const tenantId = await tenantIdOf(client, input.slug);
   const issued = await issueApiKey(client, keys.apiKeyPepper(), { tenantId, kind, scopes, name: input.name, allowedOrigins: origins });
@@ -185,26 +202,49 @@ export async function revokeKey(client: pg.ClientBase, input: { slug: string; id
   const row = r.rows[0];
   if (!row) throw new OperatorError(`There is no key with that id in "${input.slug}".`);
   if (row.revoked_at !== null) return "already";
-  await client.query("UPDATE api_keys SET revoked_at = now() WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL", [tenantId, input.id]);
-  return "revoked";
+  // Another operator may have revoked it since the read above, in which case this update changes nothing.
+  const updated = await client.query("UPDATE api_keys SET revoked_at = now() WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL", [tenantId, input.id]);
+  return updated.rowCount === 1 ? "revoked" : "already";
 }
 
 const PROFILE_FIELDS = ["controller", "policyUrl", "service"];
-const MAX_PROFILE_BYTES = 100_000;
+/** What is read from the file at most, and the most characters a profile may have: a receipt is limited to 16 KiB in all. */
+const MAX_PROFILE_FILE_BYTES = 20_000;
+const MAX_PROFILE_CHARS = 4000;
+
+/** Reads a regular file of at most `MAX_PROFILE_FILE_BYTES` without waiting on a pipe or trusting a size that can change. */
+async function readProfileFile(path: string): Promise<string> {
+  let handle;
+  try {
+    handle = await open(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch {
+    throw new OperatorError(`Cannot read the file "${path}".`);
+  }
+  try {
+    if (!(await handle.stat()).isFile()) throw new OperatorError("The profile must be in a regular file.");
+    const buffer = Buffer.alloc(MAX_PROFILE_FILE_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MAX_PROFILE_FILE_BYTES) throw new OperatorError("The profile file is too large (over 20 KB).");
+    return buffer.toString("utf8", 0, length);
+  } catch (e) {
+    if (e instanceof OperatorError) throw e;
+    throw new OperatorError(`Cannot read the file "${path}".`);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
 
 /**
  * Sets who the organisation is as a data fiduciary, which every consent receipt carries. The profile is checked by building a
  * sample receipt from it, so a profile that is saved is one the API can sign receipts with.
  */
 export async function setProfile(client: pg.ClientBase, input: { slug: string; file: string }): Promise<void> {
-  let text: string;
-  try {
-    if ((await stat(input.file)).size > MAX_PROFILE_BYTES) throw new OperatorError("The profile file is too large (over 100 KB).");
-    text = await readFile(input.file, "utf8");
-  } catch (e) {
-    if (e instanceof OperatorError) throw e;
-    throw new OperatorError(`Cannot read the file "${input.file}".`);
-  }
+  const text = await readProfileFile(input.file);
   let profile: unknown;
   try {
     profile = JSON.parse(text);
@@ -215,6 +255,9 @@ export async function setProfile(client: pg.ClientBase, input: { slug: string; f
   const p = profile as Record<string, unknown>;
   const unknown = Object.keys(p).find((k) => !PROFILE_FIELDS.includes(k));
   if (unknown !== undefined) throw new OperatorError(`The profile has an unknown field "${unknown}". The fields are ${PROFILE_FIELDS.join(", ")}.`);
+  if (JSON.stringify(profile).length > MAX_PROFILE_CHARS) {
+    throw new OperatorError(`The profile is too large for a receipt to carry (over ${String(MAX_PROFILE_CHARS)} characters). A receipt is limited in size, and consents would fail.`);
+  }
   if (typeof p.controller !== "object" || p.controller === null || Array.isArray(p.controller)) {
     throw new OperatorError("The profile needs a controller: an object with piiController, contact, address, email and phone.");
   }

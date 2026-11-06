@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runOperator } from "../../src/operator/cli.js";
@@ -22,6 +23,8 @@ async function op(args: string[]) {
 }
 const rows = (sql: string, params: unknown[] = []) => api.db.owner.query(sql, params).then((r) => r.rows as Record<string, unknown>[]);
 const tokenOf = (out: string) => (/Key \(shown once\): (\S+)/.exec(out) ?? [])[1] as string;
+/** Everything after `pk_<id>_`: the secret part, which may itself contain underscores. */
+const secretOf = (token: string) => token.replace(/^(pk|sk)_[0-9a-f]{32}_/, "");
 const idOf = (out: string) => (/Id: ([0-9a-f-]{36})/.exec(out) ?? [])[1] as string;
 const dir = mkdtempSync(join(tmpdir(), "saral-op-"));
 function file(name: string, content: unknown): string {
@@ -48,7 +51,7 @@ describe("key:issue", () => {
     // Signed in (400 for the empty body), not 401.
     expect((await api.http().post("/v1/consents").set("Authorization", `Bearer ${token}`).send({})).status).toBe(400);
     const stored = await rows("SELECT * FROM api_keys WHERE id = $1", [idOf(r.out)]);
-    expect(JSON.stringify(stored)).not.toContain(token.split("_")[2] as string);
+    expect(JSON.stringify(stored)).not.toContain(secretOf(token));
     expect(stored[0]).toMatchObject({ kind: "publishable", scopes: ["sdk"], name: "Web", allowed_origins: [] });
   });
 
@@ -84,6 +87,28 @@ describe("key:issue", () => {
   });
 
   test.each([
+    ["https://shop.example.org:443", ["https://shop.example.org"]],
+    ["https://shop.example.org/", ["https://shop.example.org"]],
+    ["https://Shop.Example.ORG", ["https://shop.example.org"]],
+    ["http://localhost:80", ["http://localhost"]],
+    ["https://shop.example.org:8443", ["https://shop.example.org:8443"]],
+    ["https://[::1]:8443", ["https://[::1]:8443"]],
+    ["https://[0:0:0:0:0:0:0:1]", ["https://[::1]"]],
+    ["https://shop.example.org,https://shop.example.org:443", ["https://shop.example.org"]],
+  ])("stores the origin %s the way a browser sends it", async (given, stored) => {
+    const slug = await newTenant();
+    const r = await op(["key:issue", "--tenant", slug, "--kind", "publishable", "--name", "Shop", "--origins", given]);
+    expect(r.code).toBe(0);
+    expect((await rows("SELECT allowed_origins FROM api_keys WHERE id = $1", [idOf(r.out)]))[0]?.allowed_origins).toEqual(stored);
+  });
+
+  test("a key limited to an origin written with its default port still works from the page", async () => {
+    const slug = await newTenant();
+    const token = tokenOf((await op(["key:issue", "--tenant", slug, "--kind", "publishable", "--name", "Shop", "--origins", `${ORIGIN}:443`])).out);
+    expect((await api.http().post("/v1/consents").set("Authorization", `Bearer ${token}`).set("Origin", ORIGIN).send({})).status).toBe(400);
+  });
+
+  test.each([
     ["an unknown organisation", ["--tenant", "nope-org", "--kind", "secret", "--name", "x"], /no organisation/i],
     ["an unknown kind", ["--kind", "master", "--name", "x"], /publishable or secret/],
     ["an empty name", ["--kind", "secret", "--name", ""], /name/],
@@ -93,6 +118,14 @@ describe("key:issue", () => {
     ["a repeated scope", ["--kind", "secret", "--name", "x", "--scopes", "sdk,sdk"], /scope/],
     ["origins on a secret key", ["--kind", "secret", "--name", "x", "--origins", ORIGIN], /origins.*publishable/i],
     ["an origin with a path", ["--kind", "publishable", "--name", "x", "--origins", "https://shop.example.org/app"], /origin/],
+    ["an origin with a query", ["--kind", "publishable", "--name", "x", "--origins", "https://shop.example.org/?a=1"], /origin/],
+    ["an origin with a user name", ["--kind", "publishable", "--name", "x", "--origins", "https://me@shop.example.org"], /origin/],
+    ["an origin with a fragment", ["--kind", "publishable", "--name", "x", "--origins", "https://shop.example.org#top"], /origin/],
+    ["an origin with only a password", ["--kind", "publishable", "--name", "x", "--origins", "https://:x@shop.example.org"], /origin/],
+    ["an origin written without the two slashes", ["--kind", "publishable", "--name", "x", "--origins", "https:shop.example.org"], /origin/],
+    ["an origin that is not a URL", ["--kind", "publishable", "--name", "x", "--origins", "shop.example.org"], /origin/],
+    ["an empty entry in the list", ["--kind", "publishable", "--name", "x", "--origins", `${ORIGIN},`], /origin/],
+    ["a plain http IPv6 origin", ["--kind", "publishable", "--name", "x", "--origins", "http://[::1]:3000"], /origin/],
     ["an origin with a wildcard", ["--kind", "publishable", "--name", "x", "--origins", "https://*.example.org"], /origin/],
     ["a plain http origin that is not localhost", ["--kind", "publishable", "--name", "x", "--origins", "http://shop.example.org"], /origin/],
   ])("rejects %s, and stores no key", async (_n, args, message) => {
@@ -116,7 +149,7 @@ describe("key:list and key:revoke", () => {
     expect(list.out).toMatch(/publishable/);
     expect(list.out).toContain("Web");
     expect(list.out).toMatch(/active/);
-    expect(list.out).not.toContain((tokenOf(made.out).split("_")[2]) as string);
+    expect(list.out).not.toContain(secretOf(tokenOf(made.out)));
   });
 
   test("keys are listed oldest first", async () => {
@@ -209,13 +242,46 @@ describe("profile:set", () => {
     expect((await profileOf(a) as { service: string }).service).toBe(PROFILE.service);
   });
 
-  test("refuses a file over 100 KB", async () => {
+  test("refuses a file over 20 KB without reading all of it", async () => {
     const slug = await newTenant();
-    const big = file("big.json", JSON.stringify({ ...PROFILE, service: "x".repeat(100_001) }));
+    const big = file("big.json", JSON.stringify({ ...PROFILE, service: "x".repeat(20_001) }));
     const r = await op(["profile:set", "--tenant", slug, "--file", big]);
     expect(r.code).toBe(1);
-    expect(r.err).toMatch(/too large/i);
+    expect(r.err).toMatch(/file is too large/i);
     expect(await profileOf(slug)).toEqual({});
+  });
+
+  test("refuses a profile too large for a receipt to carry, which would make every consent fail", async () => {
+    const slug = await newTenant();
+    const r = await op(["profile:set", "--tenant", slug, "--file", file("long.json", { ...PROFILE, service: "x".repeat(5000) })]);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/receipt/i);
+    expect(r.err).toMatch(/4000/);
+    expect(await profileOf(slug)).toEqual({});
+  });
+
+  test("a profile at the limit is saved and still lets a consent be recorded", async () => {
+    const slug = await newTenant();
+    const filler = "x".repeat(3000);
+    const profile = { ...PROFILE, controller: { ...PROFILE.controller, contact: filler } };
+    expect(JSON.stringify(profile).length).toBeLessThanOrEqual(4000);
+    expect((await op(["profile:set", "--tenant", slug, "--file", file("edge.json", profile)])).code).toBe(0);
+  });
+
+  test("refuses anything that is not a regular file, without waiting on it", async () => {
+    const slug = await newTenant();
+    const folder = join(dir, "a-folder");
+    mkdirSync(folder);
+    const asFolder = await op(["profile:set", "--tenant", slug, "--file", folder]);
+    expect(asFolder.code).toBe(1);
+    expect(asFolder.err).toMatch(/regular file/i);
+    if (process.platform !== "win32") {
+      const pipe = join(dir, "a-pipe");
+      execFileSync("mkfifo", [pipe]);
+      const asPipe = await op(["profile:set", "--tenant", slug, "--file", pipe]);
+      expect(asPipe.code).toBe(1);
+      expect(asPipe.err).toMatch(/regular file/i);
+    }
   });
 
   test("says so when the file cannot be read or is not JSON, without printing the file's content", async () => {
