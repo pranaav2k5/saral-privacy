@@ -21,5 +21,5 @@ The DPO dashboard and the admin tools need people to sign in. `docs/PLAN.md` req
 
 - No refresh token is stored, so a stolen session works until it expires or the account's `session_version` changes.
 - A person who loses both the authenticator and the recovery codes needs an operator.
-- Operators need a way to create accounts and to reset a password or authenticator: only the creation helper exists, there is no command-line tool or reset flow yet.
+- Operators create and recover accounts with `pnpm --filter @saral/api operator` (`apps/api/src/operator`). It runs with database-owner credentials, so what it does is not in the organisation's audit log. It works only with the development key provider, because the accounts' email index and sealed fields use the same keys as the API. There is still no self-service password change, so a password the tool generated stays valid until an operator resets it.
 - Revisit when single sign-on is needed, or when browsers need a cookie-based session (a dashboard on another origin would otherwise hold the token in script-readable storage).

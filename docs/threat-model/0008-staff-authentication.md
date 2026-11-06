@@ -31,7 +31,7 @@ Staff accounts (they can read consents, rights requests and contact details), th
 
 - No rate limiting by address, and lock-out lets an attacker lock someone out.
 - A stolen session token works until it expires (15 minutes), is refreshed up to eight hours, or the account is disabled. There is no logout route that revokes one session; bumping the session version ends them all.
-- Accounts can only be created by an operator through code; there is no reset flow and no tool, so recovery from a lost authenticator and lost recovery codes is manual.
+- Accounts are created and recovered by the operator tool (`apps/api/src/operator`). It runs with database-owner credentials, so its actions are not in the organisation's audit log, and a person who loses their authenticator and recovery codes must ask an operator. It needs the development key provider, so it cannot be used in production until KMS exists. A generated password cannot be changed by the person, only reset by an operator.
 - The development key provider derives the session and index keys from one secret.
 - The dashboard must keep the token out of script-readable storage if it can (it cannot with a bearer token in a single-page app; revisit with a cookie-based session).
 

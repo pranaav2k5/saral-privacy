@@ -135,4 +135,4 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 - No rate limiting; no circuit breaker for failing webhook endpoints.
 - No nightly anchor job, no KMS provider, no deployment.
 - Hindi text is an unreviewed draft; the four further languages are not started.
-- There is no tool or flow to create staff accounts, reset a password or reset an authenticator, and the dashboard has no content security policy for scripts (threat model 0009).
+- Staff accounts are made and recovered by an operator tool that works only with the development key provider, staff cannot change their own password, and the dashboard has no content security policy for scripts (threat models 0008 and 0009).
