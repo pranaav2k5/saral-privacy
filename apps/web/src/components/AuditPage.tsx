@@ -50,7 +50,7 @@ export function AuditPage() {
 function VerifyCard() {
   const { api } = useSession();
   const [date, setDate] = useState("");
-  const action = useAction<AuditResult>(messageOf);
+  const action = useAction<{ result: AuditResult; day: string | null }>(messageOf);
 
   return (
     <section aria-labelledby="verify-h" className="flex flex-col gap-3 rounded border border-rule bg-sheet p-4">
@@ -59,27 +59,28 @@ function VerifyCard() {
         className="flex flex-wrap items-end gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          void action.run(() => api.verifyAudit(date === "" ? undefined : date));
+          void action.run(async () => ({ result: await api.verifyAudit(date === "" ? undefined : date), day: date === "" ? null : date }));
         }}
       >
         <div className="flex flex-col gap-1">
-          <label htmlFor="verify-date" className="font-medium">Check only this day (optional)</label>
-          <input id="verify-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="min-h-11 rounded border border-field bg-sheet px-3" />
+          <label htmlFor="verify-date" className="font-medium">Check only this day, UTC (optional)</label>
+          <input id="verify-date" type="date" value={date} onChange={(e) => { setDate(e.target.value); action.reset(); }} className="min-h-11 rounded border border-field bg-sheet px-3" />
         </div>
         <Button type="submit" disabled={action.busy}>{action.busy ? "Verifying…" : "Verify"}</Button>
       </form>
       {action.error && <Alert>{action.error}</Alert>}
-      {action.result && !action.result.ok && (
-        <Alert>The log does not match at {failureText(action.result.failure, action.result.seqNo)}. Do not rely on this log until it is explained.</Alert>
+      {action.result && !action.result.result.ok && (
+        <Alert>The log does not match at {failureText(action.result.result.failure, action.result.result.seqNo)}. Do not rely on this log until it is explained.</Alert>
       )}
-      {action.result?.ok && action.result.count === 0 && <p role="status">There are no entries to check yet.</p>}
-      {action.result?.ok && action.result.count > 0 && (
+      {action.result?.result.ok && action.result.result.count === 0 && <p role="status">There are no entries to check yet.</p>}
+      {action.result?.result.ok && action.result.result.count > 0 && (
         <div role="status" className="flex flex-col gap-2 rounded bg-ok-bg p-3 text-ok-fg">
-          <p className="font-semibold">The log is intact.</p>
-          <p>{range(action.result.count, action.result.firstSeqNo, action.result.lastSeqNo)}</p>
+          <p className="font-semibold">{action.result.day ? `The log is intact for ${action.result.day} (UTC).` : "The log is intact."}</p>
+          {action.result.day && <p>Only that day&apos;s entries were checked. Check without a day to verify the whole chain.</p>}
+          <p>{range(action.result.result.count, action.result.result.firstSeqNo, action.result.result.lastSeqNo)}</p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-            <Hash label="Latest entry fingerprint" value={action.result.headHash} />
-            <Hash label="Merkle root" value={action.result.merkleRoot} />
+            <Hash label="Latest entry fingerprint" value={action.result.result.headHash} />
+            <Hash label="Merkle root" value={action.result.result.merkleRoot} />
           </dl>
         </div>
       )}
@@ -118,7 +119,7 @@ function AnchorCard() {
         }}
       >
         <div className="flex flex-col gap-1">
-          <label htmlFor="anchor-day" className="font-medium">Day</label>
+          <label htmlFor="anchor-day" className="font-medium">Day (UTC)</label>
           <input id="anchor-day" type="date" value={day} onChange={(e) => setDay(e.target.value)} className="min-h-11 rounded border border-field bg-sheet px-3" />
         </div>
         <Button type="submit" disabled={action.busy}>{action.busy ? "Fetching…" : "Get anchor"}</Button>

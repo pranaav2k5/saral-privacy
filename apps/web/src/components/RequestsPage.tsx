@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useState, type FormEvent } from "react";
-import type { RightsRequest } from "@/lib/api";
+import { ApiError, type RightsRequest } from "@/lib/api";
 import { dueLabel, when, type Tone } from "@/lib/format";
 import { useSession } from "@/lib/session";
 import { ACTION_LABEL, STATES, nextStates, stateLabel, typeLabel, type RequestState } from "@/lib/states";
 import { messageOf, useLoad } from "@/lib/use-load";
-import { Alert, Button } from "./ui";
+import { Alert, Button, focusOnMount } from "./ui";
 
 const TONE: Record<Tone, string> = {
   overdue: "bg-overdue-bg text-overdue-fg",
@@ -116,11 +116,16 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
   const [reason, setReason] = useState("");
   const [contact, setContact] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // The heading takes focus once, when it first appears, so keyboard users land on the request they opened.
-  const focusOnMount = useCallback((el: HTMLElement | null) => el?.focus(), []);
 
   if (loaded.status === "loading") return <p role="status">Loading request…</p>;
-  if (loaded.status === "error") return <Alert>{loaded.error}</Alert>;
+  if (loaded.status === "error") {
+    return (
+      <div className="flex flex-col items-start gap-3">
+        <Alert>{loaded.error}</Alert>
+        <Button type="button" onClick={loaded.retry}>Try again</Button>
+      </div>
+    );
+  }
   const r = moved ?? loaded.data;
 
   async function go(to: RequestState, why?: string) {
@@ -137,6 +142,13 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
       onChanged();
     } catch (e) {
       setProblem(messageOf(e));
+      if (e instanceof ApiError && e.status === 409) {
+        // Someone else moved this request first. Show what it is now, so the steps offered are the real ones.
+        setMoved(null);
+        setConfirm(null);
+        loaded.refresh();
+        onChanged();
+      }
     } finally {
       setBusy(false);
     }
@@ -213,7 +225,7 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
       {confirm === "rejected" ? (
         <form onSubmit={submitRejection} className="flex flex-col gap-2">
           <label htmlFor={`reason-${id}`} className="font-medium">Reason for rejecting</label>
-          <textarea id={`reason-${id}`} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} rows={3} className="rounded border border-field bg-sheet p-2" />
+          <textarea id={`reason-${id}`} ref={focusOnMount} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} rows={3} className="rounded border border-field bg-sheet p-2" />
           <div className="flex gap-2">
             <Button type="submit" disabled={busy}>Confirm rejection</Button>
             <Button type="button" onClick={() => { setConfirm(null); setProblem(null); }} className="!bg-sheet !text-action border border-action">Cancel</Button>
@@ -223,7 +235,7 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
         <div className="flex flex-col gap-2">
           <p>{CONFIRM[confirm].warning}</p>
           <div className="flex gap-2">
-            <Button type="button" onClick={() => void go(confirm)} disabled={busy}>{CONFIRM[confirm].yes}</Button>
+            <Button type="button" ref={focusOnMount} onClick={() => void go(confirm)} disabled={busy}>{CONFIRM[confirm].yes}</Button>
             <Button type="button" onClick={() => setConfirm(null)} className="!bg-sheet !text-action border border-action">Cancel</Button>
           </div>
         </div>

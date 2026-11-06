@@ -53,7 +53,9 @@ function OfficerOverview() {
   const soon = tones.filter((t) => t === "soon").length;
   return (
     <>
-      {overdue > 0 && <Alert>{`${String(overdue)} ${overdue === 1 ? "request is" : "requests are"} overdue.`}</Alert>}
+      {overdue > 0 && (
+        <p role="status" className="rounded border border-overdue-fg bg-overdue-bg px-3 py-2 text-overdue-fg">{`${String(overdue)} ${overdue === 1 ? "request is" : "requests are"} overdue.`}</p>
+      )}
       <dl className="grid gap-3 sm:grid-cols-3">
         <Stat label="Open requests" value={open} />
         <Stat label="Overdue" value={overdue} />

@@ -11,7 +11,7 @@ function Status() {
 const view = (routes = {}) => renderScreen(<><SignIn /><Status /></>, { routes });
 
 function fillCredentials(password = "correct horse") {
-  fireEvent.change(screen.getByLabelText("Organisation"), { target: { value: "acme" } });
+  fireEvent.change(screen.getByLabelText("Organisation short name"), { target: { value: "  Acme " } });
   fireEvent.change(screen.getByLabelText("Work email"), { target: { value: "dpo@example.org" } });
   fireEvent.change(screen.getByLabelText("Password"), { target: { value: password } });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -33,14 +33,15 @@ test("wrong details show the server's message, keep the email, and clear the pas
   expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
 });
 
-test("the sign-in call carries the organisation, email and password", async () => {
+test("the organisation short name is explained, and is sent trimmed and in lower case", async () => {
   const v = view({ "POST /v1/auth/login": { status: 401, body: {} } });
   fillCredentials();
   await screen.findByRole("alert");
+  expect(screen.getByText(/lowercase short name/i)).toBeTruthy();
   expect(v.callsTo("POST", "/v1/auth/login")[0]?.body).toEqual({ tenant: "acme", email: "dpo@example.org", password: "correct horse" });
 });
 
-test("the button is disabled while the request is in flight, so one press cannot send two", async () => {
+test("the button is disabled while the request is in flight", async () => {
   let release: () => void = () => undefined;
   const gate = new Promise<void>((r) => (release = r));
   const v = view({ "POST /v1/auth/login": { status: 401, body: {}, wait: gate } });
@@ -59,7 +60,9 @@ test("a person who already has an authenticator app enters the code and is signe
     "POST /v1/auth/mfa/verify": { body: session },
   });
   fillCredentials();
-  fireEvent.change(await screen.findByLabelText("Authenticator code or recovery code"), { target: { value: "123456" } });
+  const code = await screen.findByLabelText("Authenticator code or recovery code");
+  expect(document.activeElement).toBe(code); // the next thing to type
+  fireEvent.change(code, { target: { value: "123456" } });
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("signedIn"));
   expect(v.callsTo("POST", "/v1/auth/mfa/verify")[0]?.body).toEqual({ challenge: "c1", code: "123456" });
@@ -92,6 +95,7 @@ test("a first sign-in shows the setup key, then the recovery codes once, and onl
   fireEvent.change(screen.getByLabelText("Authenticator code or recovery code"), { target: { value: "123456" } });
   fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
   expect(await screen.findByText("AAAA-1111")).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Save your recovery codes" }));
   expect(screen.getByText("BBBB-2222")).toBeTruthy();
   expect(screen.getByText(/shown only once/i)).toBeTruthy();
   expect(screen.getByTestId("status").textContent).toBe("signedOut");

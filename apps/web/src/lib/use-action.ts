@@ -34,5 +34,10 @@ export function useAction<T>(describe: (e: unknown) => string) {
     setResult(null);
     setError(message);
   }, []);
-  return { busy, result, error, run, fail };
+  /** Forgets the last outcome, for example when the input it answered has changed. */
+  const reset = useCallback(() => {
+    setResult(null);
+    setError(null);
+  }, []);
+  return { busy, result, error, run, fail, reset };
 }

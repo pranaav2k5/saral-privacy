@@ -1,9 +1,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { SessionProvider, useSession, STORAGE_KEY, type SessionValue } from "./session";
+import type { ReactNode } from "react";
 import type { SessionInfo } from "./api";
 
 interface Call { url: string; init: RequestInit }
-type Reply = { status?: number; body?: unknown };
+type Reply = { status?: number; body?: unknown; wait?: Promise<unknown> };
 
 const NOW = Date.parse("2026-11-06T10:00:00.000Z");
 const info = (over: Partial<SessionInfo> = {}): SessionInfo => ({ token: "st_v1.one.sig", expiresAt: new Date(NOW + 15 * 60_000).toISOString(), role: "dpo", ...over });
@@ -15,6 +16,7 @@ function setup(replies: Record<string, Reply | (() => Reply)> = {}) {
     const path = new URL(url).pathname;
     const raw = replies[path] ?? { body: [] };
     const r = typeof raw === "function" ? raw() : raw;
+    if (r.wait) await r.wait;
     const status = r.status ?? 200;
     return { ok: status < 300, status, json: async () => r.body ?? {} } as unknown as Response;
   }) as unknown as typeof fetch;
@@ -145,5 +147,88 @@ describe("SessionProvider", () => {
     await waitFor(() => expect(t.out()).toBe("signedIn|dpo|-"));
     await act(async () => { await t.session().api.listRequests({}); });
     expect(t.calls[0]?.init.credentials).toBe("omit");
+  });
+});
+
+describe("races and failures around the session", () => {
+  test("the api client keeps its identity when the provider is given no clock, as in production", () => {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(info({ expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() })));
+    const seen: unknown[] = [];
+    function Grab() {
+      seen.push(useSession().api);
+      return null;
+    }
+    const fetchFn = (async () => ({ ok: true, status: 200, json: async () => [] })) as unknown as typeof fetch;
+    const tree = (extra: ReactNode) => (
+      <SessionProvider baseUrl="https://api.example.org" fetchFn={fetchFn}>
+        <Grab />
+        {extra}
+      </SessionProvider>
+    );
+    const { rerender } = render(tree(null));
+    rerender(tree(<span />));
+    rerender(tree(<b />));
+    expect(new Set(seen).size).toBe(1);
+  });
+
+  test("signing out while a refresh is in flight stays signed out, and the waiting call is not sent", async () => {
+    stored(info({ expiresAt: new Date(NOW + 60_000).toISOString() }));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const t = setup({ "/v1/auth/refresh": { body: info({ token: "st_v1.late.sig" }), wait: gate } });
+    await waitFor(() => expect(t.out()).toBe("signedIn|dpo|-"));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = t.session().api.listRequests({}).then(() => "sent", (e: unknown) => (e as Error).message);
+      await Promise.resolve();
+    });
+    act(() => t.session().signOut());
+    await act(async () => {
+      release();
+      await outcome;
+    });
+    expect(await outcome).toBe("Your session ended. Sign in again.");
+    expect(t.out()).toBe("signedOut|-|-");
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(t.calls.some((c) => c.url.endsWith("/v1/dsr"))).toBe(false);
+  });
+
+  test("a late 401 for a token that is no longer current does not end the session the person has since started", async () => {
+    stored(info());
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const t = setup({ "/v1/dsr": { status: 401, body: {}, wait: gate } });
+    await waitFor(() => expect(t.out()).toBe("signedIn|dpo|-"));
+    let pending: Promise<unknown> = Promise.resolve();
+    await act(async () => {
+      pending = t.session().api.listRequests({}).catch(() => undefined);
+      await Promise.resolve();
+    });
+    act(() => t.session().signOut());
+    act(() => t.session().signIn(info({ token: "st_v1.new.sig" })));
+    await act(async () => {
+      release();
+      await pending;
+    });
+    expect(t.out()).toBe("signedIn|dpo|-");
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string).token).toBe("st_v1.new.sig");
+  });
+
+  test("when the browser refuses to store the session, the person is still signed in for as long as the page stays open", async () => {
+    const t = setup();
+    await waitFor(() => expect(t.out()).toBe("signedOut|-|-"));
+    const spy = jest.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      act(() => t.session().signIn(info()));
+      expect(t.out()).toBe("signedIn|dpo|-");
+      await act(async () => { await t.session().api.listRequests({}); });
+      expect(auth(t.calls[0] as Call)).toBe("Bearer st_v1.one.sig");
+      act(() => t.session().signOut());
+      expect(t.out()).toBe("signedOut|-|-");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

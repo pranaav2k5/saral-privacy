@@ -26,10 +26,27 @@ describe("verifying the log", () => {
 
   test("a date limits the check to that day", async () => {
     const v = page({ "GET /v1/audit/verify": { body: ok } });
-    fireEvent.change(screen.getByLabelText("Check only this day (optional)"), { target: { value: "2026-11-05" } });
+    fireEvent.change(screen.getByLabelText("Check only this day, UTC (optional)"), { target: { value: "2026-11-05" } });
     verify();
     await screen.findByRole("status");
     expect(v.calls[0]?.search).toBe("?date=2026-11-05");
+  });
+
+  test("a one-day check says which day and that only that day was checked", async () => {
+    page({ "GET /v1/audit/verify": { body: ok } });
+    fireEvent.change(screen.getByLabelText("Check only this day, UTC (optional)"), { target: { value: "2026-11-05" } });
+    verify();
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toContain("The log is intact for 2026-11-05 (UTC).");
+    expect(status.textContent).toMatch(/only that day/i);
+  });
+
+  test("changing the day clears the earlier result, so it is never read as the answer for the new day", async () => {
+    page({ "GET /v1/audit/verify": { body: ok } });
+    verify();
+    await screen.findByRole("status");
+    fireEvent.change(screen.getByLabelText("Check only this day, UTC (optional)"), { target: { value: "2026-11-05" } });
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   test("a log that does not match is an alert naming the entry, never a success message", async () => {
@@ -79,7 +96,7 @@ describe("verifying the log", () => {
 describe("the daily anchor", () => {
   const anchor = { version: 1, tenantId: "11111111-1111-4111-8111-111111111111", date: "2026-11-05", count: 5, firstSeqNo: "38", lastSeqNo: "42", headHash: HASH, merkleRoot: ROOT };
   const getAnchor = () => fireEvent.click(screen.getByRole("button", { name: "Get anchor" }));
-  const pickDay = (d = "2026-11-05") => fireEvent.change(screen.getByLabelText("Day"), { target: { value: d } });
+  const pickDay = (d = "2026-11-05") => fireEvent.change(screen.getByLabelText("Day (UTC)"), { target: { value: d } });
 
   test("a day is required, and nothing is sent without one", () => {
     const v = page();

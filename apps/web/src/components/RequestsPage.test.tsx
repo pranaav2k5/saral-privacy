@@ -104,11 +104,11 @@ describe("one request", () => {
   });
 
   test("when the contact cannot be shown, the reason is shown", async () => {
-    page({ [`GET /v1/dsr/${ID1}`]: { body: detail }, [`POST /v1/dsr/${ID1}/reveal-contact`]: { status: 404, body: { message: "No contact was given for this request." } } });
+    page({ [`GET /v1/dsr/${ID1}`]: { body: detail }, [`POST /v1/dsr/${ID1}/reveal-contact`]: { status: 410, body: { error: "gone", message: "the contact was erased or was never captured" } } });
     await open(/^Erasure/);
     await screen.findByRole("heading", { name: "Erasure request" });
     fireEvent.click(screen.getByRole("button", { name: "Show contact details" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("No contact was given for this request.");
+    expect((await screen.findByRole("alert")).textContent).toBe("the contact was erased or was never captured");
   });
 
   test("only the legal next steps are offered", async () => {
@@ -176,17 +176,87 @@ describe("one request", () => {
   });
 
   test("when the server refuses a move, its message is shown and the request stays as it was", async () => {
-    page({ [`GET /v1/dsr/${ID1}`]: { body: detail }, [`POST /v1/dsr/${ID1}/transition`]: { status: 409, body: { message: "That request has already been moved." } } });
+    page({ [`GET /v1/dsr/${ID1}`]: { body: detail }, [`POST /v1/dsr/${ID1}/transition`]: { status: 409, body: { error: "illegal_transition", message: "a request cannot move from submitted to in_review" } } });
     await open(/^Erasure/);
     await screen.findByRole("heading", { name: "Erasure request" });
     fireEvent.click(screen.getByRole("button", { name: "Start review" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("That request has already been moved.");
-    expect(screen.getByRole("button", { name: "Start review" })).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("a request cannot move from submitted to in_review");
   });
 
   test("a recorded rejection reason is shown to the officer", async () => {
     page({ [`GET /v1/dsr/${ID1}`]: { body: { ...detail, state: "rejected", decidedReason: "Not a customer." } } });
     await open(/^Erasure/);
     expect(await screen.findByText("Not a customer.")).toBeTruthy();
+  });
+
+  test("after a refusal because someone else already moved the request, the panel and queue are reloaded so the old steps are not offered", async () => {
+    const elsewhere = { ...detail, state: "in_review" };
+    const v = page({
+      [`GET /v1/dsr/${ID1}`]: [{ body: detail }, { body: elsewhere }],
+      [`POST /v1/dsr/${ID1}/transition`]: { status: 409, body: { error: "illegal_transition", message: "a request cannot move from submitted to in_review" } },
+      "GET /v1/dsr": [{ body: queue }, { body: [access, elsewhere, fixed] }],
+    });
+    await open(/^Erasure/);
+    await screen.findByRole("heading", { name: "Erasure request" });
+    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await screen.findByRole("alert");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Start review" })).toBeNull());
+    expect(screen.getByRole("button", { name: "Mark as fulfilled" })).toBeTruthy();
+    expect(v.callsTo("GET", `/v1/dsr/${ID1}`)).toHaveLength(2);
+    expect(v.callsTo("GET", "/v1/dsr")).toHaveLength(2);
+  });
+
+  test("a refusal after an earlier move shows what the request is now, not the earlier move, and drops the open confirmation", async () => {
+    const reviewing = { ...detail, state: "in_review" };
+    const fulfilledElsewhere = { ...detail, state: "fulfilled" };
+    page({
+      [`GET /v1/dsr/${ID1}`]: [{ body: detail }, { body: fulfilledElsewhere }],
+      [`POST /v1/dsr/${ID1}/transition`]: [{ body: reviewing }, { status: 409, body: { message: "a request cannot move from fulfilled to fulfilled" } }],
+    });
+    await open(/^Erasure/);
+    await screen.findByRole("heading", { name: "Erasure request" });
+    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await screen.findByText("Moved to In review.");
+    fireEvent.click(screen.getByRole("button", { name: "Mark as fulfilled" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, mark as fulfilled" }));
+    await screen.findByRole("alert");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Yes, mark as fulfilled" })).toBeNull();
+  });
+
+  test("a request that cannot be loaded says why and offers Try again", async () => {
+    page({ [`GET /v1/dsr/${ID1}`]: [{ status: 500, body: { message: "The database is busy." } }, { body: detail }] });
+    await open(/^Erasure/);
+    expect((await screen.findByRole("alert")).textContent).toBe("The database is busy.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: "Erasure request" })).toBeTruthy();
+  });
+
+  test("opening the rejection form puts the cursor in the reason field, and opening a confirmation focuses its button", async () => {
+    page({ [`GET /v1/dsr/${ID2}`]: { body: { ...access, details: null } } });
+    await open(/^Access to data/);
+    await screen.findByRole("heading", { name: "Access to data request" });
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(document.activeElement).toBe(screen.getByLabelText("Reason for rejecting"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark as fulfilled" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Yes, mark as fulfilled" }));
+  });
+});
+
+describe("the queue's own races", () => {
+  test("a slow answer for an earlier filter never replaces the answer for the filter chosen last", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((r) => (release = r));
+    renderScreen(<RequestsPage />, {
+      role: "dpo",
+      routes: { "GET /v1/dsr": { body: queue, wait: slow }, "GET /v1/dsr?state=closed": { body: [fixed] } },
+    });
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "closed" } });
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.queryByText("Erasure")).toBeNull();
   });
 });

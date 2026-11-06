@@ -6,7 +6,7 @@ import { when } from "@/lib/format";
 import { useSession } from "@/lib/session";
 import { useAction } from "@/lib/use-action";
 import { messageOf, useLoad } from "@/lib/use-load";
-import { Alert, Button } from "./ui";
+import { Alert, Button, focusOnMount } from "./ui";
 
 /** In the order the API lists them. */
 const EVENTS: readonly { id: WebhookEvent; label: string }[] = [
@@ -34,7 +34,7 @@ export function IntegrationsPage() {
   const [chosen, setChosen] = useState<readonly WebhookEvent[]>([]);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [shown, setShown] = useState<Shown | null>(null);
-  const create = useAction<Endpoint>(messageOf);
+  const create = useAction<void>(messageOf);
   const row = useAction<void>(messageOf);
 
   async function submit(e: React.FormEvent) {
@@ -42,14 +42,14 @@ export function IntegrationsPage() {
     const address = url.trim();
     if (!address.startsWith("https://")) return create.fail("Enter an address that starts with https://");
     if (chosen.length === 0) return create.fail("Choose at least one event.");
-    const made = await create.run(() => api.createEndpoint(address, EVENTS.map((x) => x.id).filter((id) => chosen.includes(id))));
-    if (made) {
-      // The secret exists only in this component's memory. It is not stored, and the server cannot show it again.
-      setShown({ url: made.url, secret: (made as Endpoint & { secret: string }).secret, rotated: false });
+    await create.run(async () => {
+      const made = await api.createEndpoint(address, EVENTS.map((x) => x.id).filter((id) => chosen.includes(id)));
+      // The secret exists only in `shown`, in this component's memory, until it is acknowledged. The action keeps nothing.
+      setShown({ url: made.url, secret: made.secret, rotated: false });
       setUrl("");
       setChosen([]);
       list.refresh();
-    }
+    });
   }
 
   async function rotate(ep: Endpoint) {
@@ -78,8 +78,8 @@ export function IntegrationsPage() {
       </div>
 
       {shown && (
-        <section aria-labelledby="secret-h" className="flex flex-col gap-2 rounded border border-soon-fg bg-soon-bg p-4 text-soon-fg">
-          <h2 id="secret-h" className="font-semibold">{shown.rotated ? "New signing secret" : "Signing secret"} for {shown.url}</h2>
+        <section key={shown.secret} aria-labelledby="secret-h" className="flex flex-col gap-2 rounded border border-soon-fg bg-soon-bg p-4 text-soon-fg">
+          <h2 id="secret-h" ref={focusOnMount} tabIndex={-1} className="font-semibold">{shown.rotated ? "New signing secret" : "Signing secret"} for {shown.url}</h2>
           <p className="break-all font-mono text-lg select-all">{shown.secret}</p>
           <p>This secret is shown only once. Copy it into your system now. {shown.rotated ? "The old secret has stopped working." : "It cannot be shown again."}</p>
           <Button type="button" className="self-start" onClick={() => setShown(null)}>I have copied the secret</Button>
@@ -133,7 +133,7 @@ export function IntegrationsPage() {
                             : "Nothing more is sent to this endpoint. This cannot be undone."}
                         </p>
                         <div className="flex gap-2">
-                          <Button type="button" disabled={row.busy} onClick={() => void (confirm.kind === "rotate" ? rotate(ep) : disable(ep))}>
+                          <Button type="button" ref={focusOnMount} disabled={row.busy} onClick={() => void (confirm.kind === "rotate" ? rotate(ep) : disable(ep))}>
                             {confirm.kind === "rotate" ? "Yes, rotate" : "Yes, disable"}
                           </Button>
                           <Button type="button" className={secondary} onClick={() => setConfirm(null)}>Cancel</Button>

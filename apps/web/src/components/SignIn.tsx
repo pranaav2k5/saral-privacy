@@ -3,7 +3,7 @@
 import { useId, useState, type FormEvent } from "react";
 import { ApiError, type SessionInfo } from "@/lib/api";
 import { useSession } from "@/lib/session";
-import { Alert, Button, Field } from "./ui";
+import { Alert, Button, Field, focusOnMount } from "./ui";
 
 type Step =
   | { name: "credentials" }
@@ -42,7 +42,7 @@ export function SignIn() {
       let challenge: string;
       let mfa: "enroll" | "verify";
       try {
-        ({ challenge, mfa } = await api.login(tenant.trim(), email.trim(), password));
+        ({ challenge, mfa } = await api.login(tenant.trim().toLowerCase(), email.trim(), password));
       } catch (e) {
         setPassword("");
         throw e;
@@ -67,7 +67,7 @@ export function SignIn() {
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center gap-6 p-6" aria-labelledby={headingId}>
       <header>
         <p className="text-sm font-semibold tracking-wide text-ink-soft">Saral Privacy</p>
-        <h1 id={headingId} className="text-2xl font-semibold">
+        <h1 id={headingId} ref={step.name === "recovery" ? focusOnMount : undefined} tabIndex={-1} className="text-2xl font-semibold">
           {step.name === "recovery" ? "Save your recovery codes" : "Sign in"}
         </h1>
       </header>
@@ -77,7 +77,7 @@ export function SignIn() {
 
       {step.name === "credentials" && (
         <form onSubmit={submitCredentials} className="flex flex-col gap-4 rounded border border-rule bg-sheet p-5">
-          <Field label="Organisation" value={tenant} onChange={setTenant} autoComplete="organization" required />
+          <Field label="Organisation short name" hint="The lowercase short name you were given, for example acme." value={tenant} onChange={setTenant} autoComplete="organization" required />
           <Field label="Work email" value={email} onChange={setEmail} type="email" autoComplete="username" required />
           <Field label="Password" value={password} onChange={setPassword} type="password" autoComplete="current-password" required />
           <Button type="submit" disabled={busy}>{busy ? "Checking…" : "Continue"}</Button>
@@ -98,7 +98,7 @@ export function SignIn() {
           ) : (
             <p>Enter the code from your authenticator app.</p>
           )}
-          <Field label="Authenticator code or recovery code" value={code} onChange={setCode} autoComplete="one-time-code" required />
+          <Field label="Authenticator code or recovery code" value={code} onChange={setCode} autoComplete="one-time-code" required focus />
           <Button type="submit" disabled={busy}>{busy ? "Checking…" : step.setup ? "Finish setup" : "Sign in"}</Button>
           <button type="button" className="self-start text-sm text-action underline" onClick={() => { setStep({ name: "credentials" }); setCode(""); setError(null); }}>
             Start again

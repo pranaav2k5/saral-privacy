@@ -28,19 +28,19 @@ test("finished requests are not counted as overdue even though their date has pa
 
 test("overdue requests are called out in words and link to the queue", async () => {
   dpo();
-  expect((await screen.findByRole("alert")).textContent).toBe("1 request is overdue.");
+  expect((await screen.findByText("1 request is overdue.")).getAttribute("role")).toBe("status");
   expect(screen.getByRole("link", { name: "Go to requests" }).getAttribute("href")).toBe("/requests");
 });
 
 test("several overdue requests use the plural", async () => {
   dpo({ "GET /v1/dsr": { body: [queue[0], { ...queue[0], id: "5" }] } });
-  expect((await screen.findByRole("alert")).textContent).toBe("2 requests are overdue.");
+  expect((await screen.findByText("2 requests are overdue.")).getAttribute("role")).toBe("status");
 });
 
 test("nothing overdue means no alert", async () => {
   dpo({ "GET /v1/dsr": { body: [queue[1]] } });
   await screen.findByText("Open requests");
-  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText(/overdue\./)).toBeNull();
 });
 
 test("a failure is shown, and Try again loads the counts", async () => {

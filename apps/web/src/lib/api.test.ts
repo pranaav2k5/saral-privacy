@@ -25,6 +25,12 @@ describe("ApiClient", () => {
     expect(calls[0]?.init.credentials).toBe("omit");
   });
 
+  test("asks the browser not to keep answers in its HTTP cache, since they hold personal data", async () => {
+    const { api, calls } = client(() => ({ body: [] }));
+    await api.listRequests({});
+    expect(calls[0]?.init.cache).toBe("no-store");
+  });
+
   test("sends no Authorization header when there is no session (sign-in itself)", async () => {
     const { api, calls } = client(() => ({ body: { challenge: "c", mfa: "verify" } }), null);
     await api.login("org", "a@example.org", "pw");

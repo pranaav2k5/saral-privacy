@@ -1,6 +1,14 @@
 "use client";
 
-import { useId, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
+
+/**
+ * Ref callback that moves keyboard focus to an element when it first appears. It is one shared function, so React calls
+ * it once on mount and not again on later renders. Use it when a step replaces the control that had focus.
+ */
+export const focusOnMount = (el: HTMLElement | null): void => {
+  el?.focus();
+};
 
 /** An error message that screen readers announce when it appears. */
 export function Alert({ children }: { children: ReactNode }) {
@@ -11,7 +19,7 @@ export function Alert({ children }: { children: ReactNode }) {
   );
 }
 
-export function Button({ className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+export function Button({ className = "", ...props }: ComponentProps<"button">) {
   return (
     <button
       {...props}
@@ -27,6 +35,8 @@ export function Field({
   type = "text",
   autoComplete,
   required,
+  hint,
+  focus,
 }: {
   label: string;
   value: string;
@@ -34,13 +44,21 @@ export function Field({
   type?: string;
   autoComplete?: string;
   required?: boolean;
+  /** Help shown under the label and read out with the field. */
+  hint?: string;
+  /** Focus this field when it first appears. */
+  focus?: boolean;
 }) {
   const id = useId();
+  const hintId = `${id}-hint`;
   return (
     <div className="flex flex-col gap-1">
       <label htmlFor={id} className="font-medium">{label}</label>
+      {hint && <p id={hintId} className="text-sm text-ink-soft">{hint}</p>}
       <input
         id={id}
+        ref={focus ? focusOnMount : undefined}
+        aria-describedby={hint ? hintId : undefined}
         type={type}
         value={value}
         required={required}

@@ -95,6 +95,7 @@ export class ApiClient {
         method,
         headers,
         credentials: "omit",
+        cache: "no-store",
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
     } catch {

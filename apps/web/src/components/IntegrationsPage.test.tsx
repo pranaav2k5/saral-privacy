@@ -36,7 +36,7 @@ describe("the list", () => {
     expect(screen.getByRole("button", { name: `Rotate secret for ${live.url}` })).toBeTruthy();
   });
 
-  test("loading, empty and failing states are each said in words", async () => {
+  test("while loading it says so, and with no endpoints it says to add one", async () => {
     page({ "GET /v1/webhook-endpoints": [{ body: [], wait: Promise.resolve() }] });
     expect(screen.getByRole("status").textContent).toBe("Loading endpoints…");
     expect(await screen.findByText(/No endpoints yet/)).toBeTruthy();
@@ -73,6 +73,7 @@ describe("adding an endpoint", () => {
     await screen.findAllByRole("row");
     add("https://hooks.example.org/new", ["Request status changed", "Consent given"]); // picked out of order
     expect(await screen.findByText(SHOWN_ONCE)).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: /^Signing secret for/ })); // so a screen reader announces it
     expect(screen.getByText(/shown only once/i)).toBeTruthy();
     expect(v.callsTo("POST", "/v1/webhook-endpoints")[0]?.body).toEqual({ url: "https://hooks.example.org/new", events: ["consent.granted", "dsr.transitioned"] });
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(SHOWN_ONCE);
@@ -82,6 +83,23 @@ describe("adding an endpoint", () => {
     expect((screen.getByLabelText("Consent given") as HTMLInputElement).checked).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "I have copied the secret" }));
     expect(screen.queryByText(SHOWN_ONCE)).toBeNull();
+  });
+
+  test("a second secret shown while the first is still on screen takes focus and replaces the first", async () => {
+    const SECOND = ["whsec", "second", "placeholder"].join("_");
+    const created = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", url: "https://hooks.example.org/new", events: ["consent.granted"], createdAt: "2026-11-06T10:00:00.000Z", disabledAt: null, secret: SHOWN_ONCE };
+    page({
+      "POST /v1/webhook-endpoints": { status: 201, body: created },
+      [`POST /v1/webhook-endpoints/${E1}/rotate-secret`]: { body: { id: E1, secret: SECOND } },
+    });
+    await screen.findAllByRole("row");
+    add();
+    await screen.findByText(SHOWN_ONCE);
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, rotate" }));
+    await screen.findByText(SECOND);
+    expect(screen.queryByText(SHOWN_ONCE)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: /^New signing secret for/ }));
   });
 
   test("when the server refuses an address its reason is shown and the form keeps what was typed", async () => {
@@ -100,6 +118,7 @@ describe("rotating and disabling", () => {
     await screen.findAllByRole("row");
     fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
     expect(screen.getByText(/old secret stops working at once/i)).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Yes, rotate" }));
     expect(v.callsTo("POST", `/v1/webhook-endpoints/${E1}/rotate-secret`)).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Yes, rotate" }));
     expect(await screen.findByText(SHOWN_ONCE)).toBeTruthy();

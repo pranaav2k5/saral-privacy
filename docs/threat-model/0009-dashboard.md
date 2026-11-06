@@ -18,8 +18,8 @@ Browser to API (only with `Authorization: Bearer`, never cookies, `credentials: 
 
 | STRIDE | Threat | Mitigation | Proof |
 |---|---|---|---|
-| Spoofing | A stolen session token is used from elsewhere. | Tokens last 15 minutes. The browser renews one only when the person is active in the last two minutes of its life, and the server stops renewal eight hours after sign-in. A 401 on any call signs the tab out and says why. | `lib/session.test.tsx` |
-| Information disclosure | The token outlives the tab or leaks to other tabs and sites. | Kept in `sessionStorage` only (this tab, gone when it closes), never in `localStorage`, never in a cookie. Recovery codes and webhook secrets are held in component memory and never written to any storage. | `lib/session.test.tsx`, `IntegrationsPage.test.tsx`, `SignIn.test.tsx` |
+| Spoofing | A stolen session token is used from elsewhere. | Tokens last 15 minutes. The browser renews one only when the person is active in the last two minutes of its life, and the server stops renewal eight hours after sign-in. A 401 on a call made with the current session signs the tab out and says why; a late 401 or renewal from an older session cannot end or revive a newer one. | `lib/session.test.tsx` |
+| Information disclosure | The token outlives the tab or leaks to other tabs and sites. | Kept in `sessionStorage` only (this tab, gone when it closes), never in `localStorage`, never in a cookie. Recovery codes and webhook secrets are held in component memory and never written to any storage; the create-endpoint action keeps no copy of the secret once it is acknowledged. If storage is blocked the session is kept in memory only. Requests use `cache: "no-store"`. | `lib/session.test.tsx`, `IntegrationsPage.test.tsx`, `SignIn.test.tsx` |
 | Information disclosure | Cross-site request forgery. | There are no cookies. Requests carry a bearer token that a foreign page cannot read, and the browser sends `credentials: "omit"`. | `lib/api.test.ts`, `lib/session.test.tsx` |
 | Information disclosure | A contact is exposed to anyone who looks at the screen or the page source. | The queue never contains contact details. They are fetched only when the officer presses a button, each press is an audit event on the server, and the screen says so. | `RequestsPage.test.tsx` |
 | Information disclosure | The page address or content leaks to other sites. | `Referrer-Policy: no-referrer`, and the dashboard makes no third-party requests (system fonts, no analytics). | `lib/security-headers.test.ts` |
@@ -38,3 +38,6 @@ Browser to API (only with `Authorization: Bearer`, never cookies, `credentials: 
 - **Sign-in has no per-address rate limit** (threat model 0008).
 - **There is no way to create staff accounts or reset a password or authenticator from the dashboard** (operators only).
 - **Screens for notices, consent search and a consent funnel are not built.**
+- **Sign-out is client-only.** There is no logout endpoint, so a copied token stays valid until it expires (at most 15 minutes).
+- **A first-time authenticator set-up that is started again** replaces the unconfirmed secret on the server, so an authenticator entry scanned earlier stops working. The screen does not warn about this yet.
+- **Recovery codes left on screen past the token's 15 minutes**, or a computer clock more than 15 minutes ahead of the server, make "I have saved these codes" sign the person straight back out without a message.

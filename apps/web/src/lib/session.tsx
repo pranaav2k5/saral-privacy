@@ -13,6 +13,8 @@ export const SESSION_ENDED = "Your session ended. Sign in again.";
 /** A session token lives 15 minutes. Within the last two, the next call renews it first. Idle tabs simply expire. */
 const REFRESH_WITHIN_MS = 2 * 60_000;
 const ROLES: readonly Role[] = ["tenant_admin", "dpo"];
+/** One shared function, so the default clock does not change identity on every render. */
+const realClock = () => Date.now();
 
 type Snap =
   | { status: "loading" }
@@ -40,11 +42,13 @@ function createStore(now: () => number) {
   let lastRaw: string | null | undefined;
   let lastNotice: string | undefined;
   let snap: Snap = LOADING;
+  // Kept in step with sessionStorage, and used when the browser refuses to store (private mode, blocked storage).
+  let memory: string | null = null;
   const read = (): string | null => {
     try {
-      return sessionStorage.getItem(STORAGE_KEY);
+      return sessionStorage.getItem(STORAGE_KEY) ?? memory;
     } catch {
-      return null;
+      return memory;
     }
   };
   const emit = () => listeners.forEach((l) => l());
@@ -64,11 +68,12 @@ function createStore(now: () => number) {
     server: (): Snap => LOADING,
     /** Stores a session, or ends it (with an optional reason to show on the sign-in screen). */
     set(next: { token: string; expiresAt: string; role: Role } | null, why?: string) {
+      memory = next ? JSON.stringify({ token: next.token, expiresAt: next.expiresAt, role: next.role }) : null;
       try {
-        if (next) sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ token: next.token, expiresAt: next.expiresAt, role: next.role }));
+        if (memory !== null) sessionStorage.setItem(STORAGE_KEY, memory);
         else sessionStorage.removeItem(STORAGE_KEY);
       } catch {
-        /* storage blocked: the session then lasts only until the page reloads */
+        /* storage blocked: the session then lasts only until the page reloads, from `memory` */
       }
       notice = why;
       emit();
@@ -76,6 +81,7 @@ function createStore(now: () => number) {
     /** Removes a stored value that could not be used (garbled, expired, or an unknown role). */
     discardUnusable() {
       if (snap.status === "signedOut" && read() !== null) {
+        memory = null;
         try {
           sessionStorage.removeItem(STORAGE_KEY);
         } catch {
@@ -110,7 +116,7 @@ export function useSession(): SessionValue {
 export function SessionProvider({
   baseUrl,
   fetchFn,
-  now = () => Date.now(),
+  now = realClock,
   children,
 }: {
   baseUrl: string;
@@ -136,15 +142,20 @@ export function SessionProvider({
     const guarded: typeof fetch = async (input, init) => {
       const res = await send(input, init);
       const sent = (init?.headers as Record<string, string> | undefined)?.Authorization;
-      if (res.status === 401 && sent !== undefined) store.set(null, SESSION_ENDED);
+      // Only the session that sent the request can be ended by its 401: a late answer must not end a newer sign-in.
+      if (res.status === 401 && sent !== undefined && sent === `Bearer ${current()?.token ?? ""}`) store.set(null, SESSION_ENDED);
       return res;
     };
     const raw = new ApiClient(baseUrl, () => current()?.token, guarded);
     let inflight: Promise<void> | null = null;
     const renew = (): Promise<void> => {
+      const started = current()?.token;
       inflight ??= raw
         .refresh()
-        .then((s) => store.set({ token: s.token, expiresAt: s.expiresAt, role: s.role }))
+        // A person who signed out (or in again) while this was in flight must not get the renewed session back.
+        .then((s) => {
+          if (started !== undefined && current()?.token === started) store.set({ token: s.token, expiresAt: s.expiresAt, role: s.role });
+        })
         .catch(() => undefined) // a refusal already ended the session in `guarded`; a network error lets the call try with the old token
         .finally(() => {
           inflight = null;
