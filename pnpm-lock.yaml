@@ -69,6 +69,9 @@ importers:
 
   apps/site:
     dependencies:
+      '@saral/notice':
+        specifier: workspace:*
+        version: link:../../packages/notice
       next:
         specifier: 16.4.5
         version: 16.4.5(@babel/core@7.29.7)(@types/node@20.19.43)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -210,6 +213,8 @@ importers:
       '@saral/schemas':
         specifier: workspace:*
         version: link:../schemas
+
+  packages/notice: {}
 
   packages/receipts:
     dependencies:
