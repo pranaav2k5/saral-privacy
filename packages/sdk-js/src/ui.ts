@@ -1,4 +1,4 @@
-import { postJson } from "./api";
+import { newIdempotencyKey, postJson } from "./api";
 import { STRINGS, type Locale, type Strings } from "./i18n";
 import { Store, type ConsentState } from "./store";
 import { CSS } from "./styles";
@@ -108,6 +108,8 @@ export function init(options: InitOptions): SaralPrivacyInstance {
   let invalidIdentifier = false;
   let previousFocus: Element | null = null;
   let status = "";
+  /** The key of the request being retried. A new one is made whenever the request changes, and after a success. */
+  let attempt: { fingerprint: string; key: string | undefined } | undefined;
   const choices = new Map<string, boolean>(options.purposes.map((p) => [p.key, false]));
 
   if (styleUsers++ === 0) document.head.append(el("style", { "data-saral-privacy": "" }, CSS));
@@ -119,9 +121,14 @@ export function init(options: InitOptions): SaralPrivacyInstance {
   const notify = (s: ConsentState | null) => options.onChange?.(s);
   const knownIdentifier = options.identifier !== undefined;
 
+  /** The host page's callback can throw, reject or return junk (a logged-out user, a failed request). All of that means "no identifier". */
   async function resolveIdentifier(): Promise<string | undefined> {
-    const given = typeof options.identifier === "function" ? await options.identifier() : (options.identifier ?? identifierValue);
-    return given?.trim() ? given.trim() : undefined;
+    try {
+      const given = typeof options.identifier === "function" ? await options.identifier() : (options.identifier ?? identifierValue);
+      return typeof given === "string" && given.trim() !== "" ? given.trim() : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   function fail(message: string, bad = false): void {
@@ -142,7 +149,11 @@ export function init(options: InitOptions): SaralPrivacyInstance {
     invalidIdentifier = false;
     render();
     const purposes = options.purposes.map((p) => ({ key: p.key, granted: choices.get(p.key) === true }));
-    const out = await postJson(doFetch, `${apiBase}/v1/consents`, options.publishableKey, { noticeId: options.noticeId, identifier, purposes });
+    // Retrying the very same request (after a network failure) reuses its key, so the server returns the first result instead
+    // of recording a second consent that nothing could ever withdraw. A changed request gets a new key.
+    const fingerprint = JSON.stringify([identifier, purposes]);
+    if (attempt?.fingerprint !== fingerprint) attempt = { fingerprint, key: newIdempotencyKey() };
+    const out = await postJson(doFetch, `${apiBase}/v1/consents`, options.publishableKey, { noticeId: options.noticeId, identifier, purposes }, attempt.key ? { "Idempotency-Key": attempt.key } : {});
     if (out.kind === "network") return fail(t.errNetwork);
     if (out.kind === "http") return fail(out.status === 401 || out.status === 403 ? t.errAuth : t.errSave);
     const body = out.body as { consentId?: unknown; receiptId?: unknown };
@@ -155,6 +166,7 @@ export function init(options: InitOptions): SaralPrivacyInstance {
       at: new Date().toISOString(),
     };
     store.write(state);
+    attempt = undefined;
     pending = false;
     status = t.savedNote;
     close();
@@ -179,6 +191,7 @@ export function init(options: InitOptions): SaralPrivacyInstance {
     error = "";
     invalidIdentifier = false;
     render();
+    // By consent id and identifier: both must match, so knowing someone's email address is not enough to withdraw their consent.
     const out = await postJson(doFetch, `${apiBase}/v1/consents/${encodeURIComponent(current.consentId)}/withdraw`, options.publishableKey, { identifier });
     if (out.kind === "network") return fail(t.errNetwork);
     // 409 means it was already withdrawn: the person's wish is met either way.

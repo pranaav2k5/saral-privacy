@@ -30,10 +30,12 @@ The `key` of every purpose must match a purpose defined in the published notice;
 
 - Opens on the first visit with **every purpose off**. "Reject all", "Accept selected" and "Accept all" are the same kind of button with the same style: rejecting is exactly as easy as accepting. Rejecting sends nothing and is remembered on this device.
 - Accepting sends `POST /v1/consents` with the publishable key (no cookies) and keeps only the decision, the consent and receipt ids and the per-purpose choices in `localStorage`. **It never stores the email address or phone number.** If storage is blocked, it keeps the decision in memory for the page.
-- A "Privacy choices" button stays on the page. It opens the person's choices, and **Withdraw consent** is one click (plus the identifier if the page did not supply it).
+- A "Privacy choices" button stays on the page. It opens the person's choices, and **Withdraw consent** is one click (plus the identifier if the page did not supply it). Withdrawal needs both the consent id the SDK stored and the identifier, so knowing someone's email address is not enough to withdraw their consent. A person who has lost the id can find it in their receipt (`saralConsentId`), and a tenant's own server can withdraw all of a person's consents with a secret key (`POST /v1/consents/withdraw`).
 - If the network fails or the server refuses, nothing is stored, the dialog says so in plain words, and the person can try again.
 - Accessible by construction: a modal `dialog` with a labelled title, a focus trap, Escape to close, focus returned to where it was, visible focus, real switches, a live region for errors, and no motion for people who ask for less.
 - Everything is built with `textContent`; the source never uses `innerHTML` (a test enforces it). Labels and descriptions with markup show as text.
+- Every request carries a random `Idempotency-Key`. Retrying the same request after a lost response reuses it, so the server returns the first result instead of recording a second consent; a changed choice, or a request after a success, gets a new key.
+- An `identifier` callback that throws, rejects or returns something else is treated as "no identifier": the dialog says so and stays usable.
 - Loading the script does not touch the DOM, so it is safe in server-side rendering; the DOM is used only when `init` is called.
 
 ## API

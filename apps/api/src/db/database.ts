@@ -21,7 +21,19 @@ export class Database implements OnModuleDestroy {
 
   private getPool(): pg.Pool {
     if (this.settings.databaseUrl === undefined) throw new ServiceUnavailableException("the database is not configured");
-    this.pool ??= new pg.Pool({ connectionString: this.settings.databaseUrl, max: 10 });
+    if (this.pool === undefined) {
+      this.pool = new pg.Pool({
+        connectionString: this.settings.databaseUrl,
+        max: 10,
+        // A request waits a few seconds for a free connection, not forever, and no query runs longer than 30 seconds.
+        connectionTimeoutMillis: 5000,
+        statement_timeout: 30_000,
+      });
+      // The server can drop an idle connection (a failover, a restart, a proxy timeout). The pool reports that as an
+      // 'error' event, and an event emitter with no listener throws it and kills the process. Log it; the pool
+      // discards the dead connection and the next request gets a new one.
+      this.pool.on("error", (error) => console.error("database pool:", error.message));
+    }
     return this.pool;
   }
 

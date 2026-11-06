@@ -26,15 +26,17 @@ The tenant's endpoint secrets; the integrity and confidentiality of events; the 
 | Denial of service | A slow or huge response from an endpoint ties up the worker. | A 10 second wall-clock deadline on the whole exchange (an idle timer alone is defeated by a server that trickles bytes); the response is dropped as soon as the status arrives; a poll that is still running makes the next one skip. | `http-client.test.ts` (trickle test), `runner.test.ts` |
 | Denial of service (cross-tenant) | One slow endpoint, or one tenant with a large backlog, delays every other tenant's deliveries, or keeps a batch running past the visibility timeout so rows are claimed twice. | Endpoints are served at the same time (at most 10), the deliveries of one endpoint in order; an endpoint that exhausts a 60 second budget has the rest of its claimed rows released without counting an attempt; one claim takes at most 20 rows per tenant. | `webhooks.e2e.test.ts`: slow endpoint, budget, per-tenant claim |
 | Denial of service | Many endpoints or events; two registrations racing past the cap. | At most 10 active endpoints per tenant, counted and inserted under a per-tenant lock; batches of 50 per poll. | `webhooks.e2e.test.ts`: 16 concurrent registrations give exactly 10 |
-| Repudiation | Registering an endpoint cannot be traced. | `webhook.endpoint_created` is an audit event. | `webhooks.e2e.test.ts` |
+| Repudiation | Registering, disabling or rotating an endpoint cannot be traced. | `webhook.endpoint_created`, `webhook.endpoint_disabled` and `webhook.endpoint_rotated` are audit events. | `webhooks.e2e.test.ts` |
+| Information disclosure | An endpoint nobody can turn off keeps receiving consent events (a mistyped URL, a lost secret, a domain later taken over). | `DELETE /v1/webhook-endpoints/{id}` disables it and frees its slot; events still waiting for it are closed; `rotate-secret` replaces a lost or leaked secret. | `webhooks.e2e.test.ts`: disabling and rotating |
+| Denial of service (cross-tenant) | A worker that died while sending the 15th attempt leaves a row at 15 attempts; claiming it again would break the claim for every tenant. | A sweep at the start of every run closes such rows as failed, and the claim never selects rows at 15 attempts. | `webhooks.e2e.test.ts`: crashed 15th attempt |
 
 ## Residual risks
 
 - Delivery is at least once. Receivers must de-duplicate on `Idempotency-Key`.
 - The signing key hierarchy is the development provider until KMS exists. The webhook key is derived like the others.
-- No delivery log is exposed to tenants and nothing is redelivered by hand yet.
+- No delivery log is exposed to tenants and nothing is redelivered by hand yet. There is no overlap window for a rotated secret: the old one stops working at once.
 - A tenant's endpoint can still be slow or wrong; that only affects that tenant's own deliveries.
-- Rate limiting of registration is not built, and endpoints that keep failing are not disabled automatically (no circuit breaker yet).
+- Rate limiting of registration is not built, and endpoints that keep failing are not disabled automatically (no circuit breaker yet). A tenant can disable an endpoint (`DELETE`) and rotate its secret (`rotate-secret`); both are audit events. An endpoint cannot be enabled again.
 - The claim query repeats its due conditions on the locked row, because PostgreSQL rechecks only those after waiting on a concurrent claim. I could not build a deterministic test for that race; a repeated multi-worker test guards the behaviour.
 
 Owner of residual risk: repository owner (`pranaav2k5`).

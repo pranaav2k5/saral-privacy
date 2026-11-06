@@ -84,14 +84,33 @@ paths:
         keyed HMAC and then discarded; it is never stored or logged.
       x-scopes: [sdk]
       security: [{ apiKey: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            A random, unguessable token (8 to 128 letters, digits, dashes or underscores) that the caller keeps for this
+            request. Without it every request is a new consent, and the API never recognises a person by identifier alone,
+            because that would hand a stored receipt to anyone who knows the identifier.
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,128}$' }
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/GrantRequest" }
       responses:
+        "200":
+          description: >-
+            A retry: the request carries an `Idempotency-Key` that was already used for this same request, and the first result
+            is returned unchanged. Nothing is recorded again, so a lost response is safe to retry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantResponse" }
         "201":
-          description: Recorded. `receipt` is a Kantara KI-CR-v1.1.0 receipt as an RS256 JWT.
+          description: >-
+            Recorded. `receipt` is a Kantara KI-CR-v1.1.0 receipt as an RS256 JWT. Its `policyUrl` is the public notice URL
+            (when the server has a public base URL), and the extension claims `saralConsentId`, `saralNoticeId` and
+            `saralNoticeSha256` say which consent and which exact notice text it covers.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GrantResponse" }
@@ -99,7 +118,53 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The `Idempotency-Key` was already used for a different request, or its consent is no longer granted. Use a new key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/consents/withdraw:
+    post:
+      tags: [Consents]
+      operationId: withdrawAllConsents
+      summary: Withdraw every consent a person has, by identifier alone (secret keys only)
+      description: >-
+        For a tenant's server, after it has verified the person itself (a signed-in user, a support request). The identifier
+        alone proves nothing about who is calling, and a publishable key is visible in a web page, so **a publishable key gets
+        403**. Withdraws every granted consent of the person in the tenant, optionally only for one notice. Each withdrawal is
+        audited and queued as an event. A wrong identifier, another tenant's person, and nothing left to withdraw are all the
+        same 404. The browser SDK withdraws by consent id and identifier instead (`/v1/consents/{id}/withdraw`).
+      x-scopes: [sdk]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { $ref: "#/components/schemas/Identifier" }
+                noticeId: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Withdrawn.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, consentIds, withdrawnAt]
+                properties:
+                  status: { const: withdrawn }
+                  consentIds:
+                    type: array
+                    items: { type: string, format: uuid }
+                  withdrawnAt: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/consents/{id}/withdraw:
     post:
       tags: [Consents]
@@ -161,7 +226,7 @@ paths:
       description: >-
         The URL must be https on the standard port, with no credentials, and every address its host name resolves to
         must be public (private, loopback, link-local and reserved addresses are refused, and checked again at every
-        delivery). A tenant may have at most 10 active endpoints. The signing secret is shown only in this response.
+        delivery). A tenant may have at most 10 active endpoints (disable one to free a place). The signing secret is shown only in this response; `rotate-secret` issues a new one.
         Creating an endpoint is an audit event.
       x-scopes: [tenant_admin]
       security: [{ apiKey: [] }]
@@ -210,6 +275,52 @@ paths:
                 items: { $ref: "#/components/schemas/WebhookEndpoint" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/webhook-endpoints/{id}:
+    delete:
+      tags: [Webhooks]
+      operationId: disableWebhookEndpoint
+      summary: Disable a webhook endpoint
+      description: >-
+        Nothing more is sent to it and its place in the cap of 10 is free again. Events still waiting for it are
+        marked failed. Disabling is an audit event. An endpoint cannot be enabled again; register a new one.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "204":
+          description: Disabled.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/webhook-endpoints/{id}/rotate-secret:
+    post:
+      tags: [Webhooks]
+      operationId: rotateWebhookSecret
+      summary: Issue a new signing secret
+      description: >-
+        The new secret is shown only in this response. The old one stops working at once: later deliveries are signed
+        with the new secret. Rotating is an audit event. A disabled endpoint cannot be rotated.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: Rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, secret]
+                properties:
+                  id: { type: string, format: uuid }
+                  secret: { type: string, pattern: '^whsec_[A-Za-z0-9_-]{43}$' }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/audit/verify:
     get:
       tags: [Audit]
@@ -234,6 +345,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/TooLarge" }
   /v1/audit/merkle-root:
     get:
       tags: [Audit]
@@ -258,6 +370,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/TooLarge" }
 webhooks:
   consentEvent:
     post:
@@ -321,6 +434,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: Not found, or belongs to another tenant.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooLarge:
+      description: The request would read more than the limit (100,000 entries). Verify one UTC day at a time with `date`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

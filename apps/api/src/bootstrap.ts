@@ -8,7 +8,7 @@ import { AppModule } from "./app.module.js";
  * can be limited to origins, and cookies are never allowed (`credentials` stays off).
  */
 export function configureApp(app: INestApplication): void {
-  app.enableCors({ origin: true, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type"], maxAge: 600 });
+  app.enableCors({ origin: true, methods: ["GET", "POST", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key"], maxAge: 600 });
 }
 
 /**

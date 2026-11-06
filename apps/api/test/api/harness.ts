@@ -13,6 +13,7 @@ import { NOTICE_TEXT, TENANT_A, TENANT_B, createTestDb, sha256, uid, type TestDb
 export const MASTER = "test-master-secret-that-is-at-least-32-characters-long";
 export const PHONE = "+919876543210";
 export const ORIGIN = "https://shop.example.org";
+export const PUBLIC_BASE_URL = "https://api.example.org";
 
 export const DEFINITIONS = [
   {
@@ -52,6 +53,8 @@ export interface Tenant {
   id: string;
   noticeId: string;
   pk: string;
+  /** A secret key with the sdk scope: what a tenant's own server uses. */
+  server: string;
   admin: string;
   auditor: string;
   dpo: string;
@@ -98,7 +101,7 @@ export interface Api {
 
 export async function startApi(): Promise<Api> {
   const db = await createTestDb();
-  const settings: Settings = { databaseUrl: db.url, nodeEnv: "test", devMasterSecret: MASTER };
+  const settings: Settings = { databaseUrl: db.url, nodeEnv: "test", devMasterSecret: MASTER, publicBaseUrl: PUBLIC_BASE_URL };
   const hooks = new FakeWebhookHttp();
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(SETTINGS).useValue(settings)
@@ -126,6 +129,7 @@ export async function startApi(): Promise<Api> {
       id,
       noticeId,
       pk: await issue("publishable", ["sdk"], "web"),
+      server: await issue("secret", ["sdk"], "server"),
       admin: await issue("secret", ["tenant_admin"], "admin"),
       auditor: await issue("secret", ["auditor"], "auditor"),
       dpo: await issue("secret", ["dpo"], "dpo"),

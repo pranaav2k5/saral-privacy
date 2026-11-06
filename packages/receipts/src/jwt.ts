@@ -65,7 +65,10 @@ export async function signReceipt(claims: KantaraReceiptClaims, signer: ReceiptS
   const payload = b64u(JSON.stringify(claims));
   const input = `${header}.${payload}`;
   const signature = await signer.sign(Buffer.from(input, "ascii"));
-  return `${input}.${b64u(signature)}`;
+  const token = `${input}.${b64u(signature)}`;
+  // The verifier refuses tokens over the limit, so a receipt that large must not be issued: nobody could check it.
+  if (token.length > MAX_TOKEN_CHARS) throw new ReceiptError(`receipt is too large (${String(token.length)} characters, limit ${String(MAX_TOKEN_CHARS)})`);
+  return token;
 }
 
 function bitLength(n: Buffer): number {

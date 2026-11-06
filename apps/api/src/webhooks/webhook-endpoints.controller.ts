@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post } from "@nestjs/common";
 import { Auth, Scopes, type AuthContext } from "../auth/access.js";
-import { bad, objectBody } from "../http/validate.js";
+import { bad, objectBody, uuidParam } from "../http/validate.js";
 import { WEBHOOK_EVENTS, WebhookService, type WebhookEvent } from "./webhook.service.js";
 
 @Controller("v1/webhook-endpoints")
@@ -26,5 +26,21 @@ export class WebhookEndpointsController {
   @Scopes("tenant_admin")
   list(@Auth() auth: AuthContext) {
     return this.webhooks.list(auth.tenantId);
+  }
+
+  /** Disables an endpoint: nothing more is sent to it, and its place in the cap is free again. */
+  @Delete(":id")
+  @HttpCode(204)
+  @Scopes("tenant_admin")
+  async disable(@Auth() auth: AuthContext, @Param("id") id: string): Promise<void> {
+    await this.webhooks.disable(auth.tenantId, auth.keyId, uuidParam(id, "id"));
+  }
+
+  /** Issues a new signing secret, shown once. The old secret stops working at once. */
+  @Post(":id/rotate-secret")
+  @HttpCode(200)
+  @Scopes("tenant_admin")
+  rotate(@Auth() auth: AuthContext, @Param("id") id: string) {
+    return this.webhooks.rotate(auth.tenantId, auth.keyId, uuidParam(id, "id"));
   }
 }

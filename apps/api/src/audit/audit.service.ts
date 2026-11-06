@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, UnprocessableEntityException } from "@nestjs/common";
 import { GENESIS_HASH, buildAnchor, merkleRoot, sealEntry, verifyChain, type Anchor, type ChainEntry, type ChainFailure } from "@saral/audit-chain";
 import type { AuditFields } from "@saral/schemas";
 import type pg from "pg";
@@ -74,9 +74,22 @@ export class AuditService {
     return sealed;
   }
 
+  /** A verify request loads its entries into memory, so it is limited. Larger chains are verified one UTC day at a time. */
+  maxEntries = 100_000;
+
   /** The entries of the tenant (all, or one UTC day) plus the entry just before the first one. */
   private async load(tenantId: string, day?: { start: Date; end: Date }): Promise<{ entries: ChainEntry[]; previous: ChainEntry | undefined }> {
     return this.db.inScope({ tenantId }, async (c) => {
+      const counted =
+        day === undefined
+          ? await c.query<{ n: number }>("SELECT count(*)::int AS n FROM consent_audit_log")
+          : await c.query<{ n: number }>("SELECT count(*)::int AS n FROM consent_audit_log WHERE ts >= $1 AND ts < $2", [day.start, day.end]);
+      if ((counted.rows[0]?.n ?? 0) > this.maxEntries) {
+        throw new UnprocessableEntityException({
+          error: "too_large",
+          message: `more than ${String(this.maxEntries)} entries; verify one UTC day at a time with ?date=YYYY-MM-DD`,
+        });
+      }
       const rows =
         day === undefined
           ? (await c.query<Row>("SELECT * FROM consent_audit_log ORDER BY seq_no")).rows
