@@ -10,6 +10,20 @@ coverage/
 .env.*
 !.env.example
 
+# secrets and key material (the repository is public)
+infra/terraform/envs/backend.hcl
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.kdbx
+id_rsa*
+id_ed25519*
+.aws/
+*.tfplan
+tfplan
+
 # agent workspace (scratch)
 .superpowers/
 

@@ -14,6 +14,12 @@
 - Commit messages: a short imperative subject with a type prefix (`feat:`, `fix:`, `chore:`, `docs:`, `test:`).
 - Write the failing test first, watch it fail, then make it pass.
 
+## Public repository rules
+
+- This repository is public. Never put secrets, private keys, cloud account IDs, real personal data, customer names, or unreleased commercial terms in code, tests, fixtures, issues, pull requests, or commit messages.
+- Test keys are generated at runtime. Test data uses obviously fake values (`example.org`, `.invalid` domains, made-up UUIDs).
+- Commits are authored and committed by `pranaav2k5`. Check with `git log --format='%an|%cn' origin/main..HEAD` before pushing.
+
 ## Definition of Done
 
 A change is done when it has:
