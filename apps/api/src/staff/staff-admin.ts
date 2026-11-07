@@ -30,6 +30,8 @@ export interface CreateStaffInput {
   email: string;
   password: string;
   role: StaffRole;
+  /** The person must choose their own password before their session can do anything else. The operator tool always sets this. */
+  mustChangePassword?: boolean;
 }
 
 /**
@@ -44,8 +46,8 @@ export async function createStaffUser(client: pg.ClientBase, keys: KeyProvider, 
   if (problem !== null) throw new Error(`password ${problem}`);
   const id = randomUUID();
   await client.query(
-    "INSERT INTO staff_users (id, tenant_id, email_blind, email_sealed, role, password_hash) VALUES ($1, $2, $3, $4, $5, $6)",
-    [id, input.tenantId, emailBlind(keys, input.tenantId, email), Buffer.from(encryptContact(keys.contactKey(), input.tenantId, `email:${id}`, email)), input.role, await hashPassword(input.password)],
+    "INSERT INTO staff_users (id, tenant_id, email_blind, email_sealed, role, password_hash, must_change_password) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    [id, input.tenantId, emailBlind(keys, input.tenantId, email), Buffer.from(encryptContact(keys.contactKey(), input.tenantId, `email:${id}`, email)), input.role, await hashPassword(input.password), input.mustChangePassword === true],
   );
   return id;
 }

@@ -63,7 +63,7 @@ export async function createStaff(client: pg.ClientBase, keys: KeyProvider, inpu
   const password = generatePassword();
   let id: string;
   try {
-    id = await createStaffUser(client, keys, { tenantId, email: input.email, password, role: input.role as StaffRole });
+    id = await createStaffUser(client, keys, { tenantId, email: input.email, password, role: input.role as StaffRole, mustChangePassword: true });
   } catch (e) {
     if (isUnique(e)) throw new OperatorError(`${emailOf(input.email)} already has an account in "${input.slug}".`);
     if (e instanceof Error && /^(role|email|password) /.test(e.message)) throw new OperatorError(`The ${e.message}.`);
@@ -85,7 +85,7 @@ export async function resetStaff(client: pg.ClientBase, keys: KeyProvider, input
   try {
     await client.query(
       `UPDATE staff_users SET password_hash = $3, totp_secret_sealed = NULL, totp_confirmed_at = NULL, last_totp_step = -1,
-         failed_attempts = 0, locked_until = NULL, session_version = session_version + 1
+         failed_attempts = 0, locked_until = NULL, session_version = session_version + 1, must_change_password = true
        WHERE tenant_id = $1 AND id = $2`,
       [who.tenantId, who.id, hash],
     );

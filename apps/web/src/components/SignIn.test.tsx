@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { SignIn } from "./SignIn";
-import { useSession } from "@/lib/session";
+import { STORAGE_KEY, useSession } from "@/lib/session";
 import { renderScreen } from "@/test/harness";
 
 function Status() {
@@ -101,6 +101,34 @@ test("a first sign-in shows the setup key, then the recovery codes once, and onl
   expect(screen.getByTestId("status").textContent).toBe("signedOut");
   fireEvent.click(screen.getByRole("button", { name: "I have saved these codes" }));
   await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("signedIn"));
+});
+
+test("a person whose password an operator chose is signed in as such, whether or not recovery codes come first", async () => {
+  view({
+    "POST /v1/auth/login": { body: { challenge: "c1", mfa: "enroll" } },
+    "POST /v1/auth/mfa/enroll": { body: { secret: "JBSWY3DPEHPK3PXP", otpauthUrl: "otpauth://totp/Saral:dpo@example.org?secret=JBSWY3DPEHPK3PXP&issuer=Saral" } },
+    "POST /v1/auth/mfa/verify": { body: { ...session, mustChangePassword: true, recoveryCodes: ["AAAA-1111"] } },
+  });
+  fillCredentials();
+  await screen.findByText("JBSWY3DPEHPK3PXP");
+  fireEvent.change(screen.getByLabelText("Authenticator code or recovery code"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
+  await screen.findByText("AAAA-1111");
+  fireEvent.click(screen.getByRole("button", { name: "I have saved these codes" }));
+  await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("signedIn"));
+  expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string).mustChangePassword).toBe(true);
+});
+
+test("the same without recovery codes, as on a later sign-in after an operator reset", async () => {
+  view({
+    "POST /v1/auth/login": { body: { challenge: "c1", mfa: "verify" } },
+    "POST /v1/auth/mfa/verify": { body: { ...session, mustChangePassword: true } },
+  });
+  fillCredentials();
+  fireEvent.change(await screen.findByLabelText("Authenticator code or recovery code"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => expect(screen.getByTestId("status").textContent).toBe("signedIn"));
+  expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string).mustChangePassword).toBe(true);
 });
 
 test("the setup link is offered only when it really is an authenticator link", async () => {

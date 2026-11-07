@@ -104,6 +104,38 @@ describe("staff:create", () => {
   });
 });
 
+describe("a password the operator tool hands out has to be changed", () => {
+  const flagOf = async (slug: string) => (await rows("SELECT must_change_password AS f FROM staff_users WHERE tenant_id = (SELECT id FROM tenants WHERE slug = $1)", [slug]))[0]?.f;
+
+  test("both commands tell the operator that the person must choose their own password at the first sign-in", async () => {
+    const s = slug();
+    await op(["tenant:create", "--name", "Operator Test Pvt Ltd", "--slug", s]);
+    const e = email();
+    const made = await op(["staff:create", "--tenant", s, "--email", e, "--role", "dpo"]);
+    expect(made.out).toContain("They must choose their own password before they can use the dashboard.");
+    const reset = await op(["staff:reset", "--tenant", s, "--email", e]);
+    expect(reset.out).toContain("They must choose their own password before they can use the dashboard.");
+  });
+
+  test("staff:create marks the account, so the first session can only change the password", async () => {
+    const who = await tenantWithStaff();
+    expect(await flagOf(who.slug)).toBe(true);
+    const first = await firstSignIn(who);
+    expect(first.verify.body.mustChangePassword).toBe(true);
+    expect((await api.http().get("/v1/dsr").set("Authorization", `Bearer ${first.token}`)).status).toBe(403);
+  });
+
+  test("changing it frees the account, and a later staff:reset marks it again", async () => {
+    const who = await tenantWithStaff();
+    const first = await firstSignIn(who);
+    const changed = await api.http().post("/v1/auth/password").set("Authorization", `Bearer ${first.token}`).send({ currentPassword: who.password, newPassword: "my own long passphrase 77" });
+    expect(changed.status).toBe(200);
+    expect(await flagOf(who.slug)).toBe(false);
+    expect((await op(["staff:reset", "--tenant", who.slug, "--email", who.email])).code).toBe(0);
+    expect(await flagOf(who.slug)).toBe(true);
+  });
+});
+
 describe("staff:reset", () => {
   test("gives a new password, ends old sessions, clears the lock and the authenticator, so the person sets up again", async () => {
     const who = await tenantWithStaff();

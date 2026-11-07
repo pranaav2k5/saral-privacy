@@ -659,7 +659,7 @@ paths:
       tags: [Staff sign-in]
       operationId: staffRefresh
       summary: A new session for a still-valid one
-      description: Sessions only (an API key gets 403). Refuses once eight hours have passed since the person last signed in with a password and a code.
+      description: Sessions only (an API key gets 403). Refuses once eight hours have passed since the person last signed in with a password and a code. A session whose password must still be changed may renew itself.
       x-scopes: [tenant_admin, dpo]
       security: [{ apiKey: [] }]
       responses:
@@ -730,9 +730,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [staffId, tenantId, scopes]
+                required: [staffId, tenantId, scopes, mustChangePassword]
                 properties:
                   staffId: { type: string, format: uuid }
+                  mustChangePassword: { type: boolean }
                   email: { type: [string, "null"] }
                   role: { enum: [tenant_admin, dpo, null] }
                   tenantId: { type: string, format: uuid }
@@ -856,7 +857,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: The key is valid but lacks the scope, or is used from an origin it is not allowed from.
+      description: The key is valid but lacks the scope, or is used from an origin it is not allowed from. A staff session whose password must still be changed gets `error` `password_change_required` on every route except `/v1/auth/me`, `/v1/auth/refresh` and `/v1/auth/password`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -950,11 +951,17 @@ components:
             details: { type: [string, "null"] }
     StaffSession:
       type: object
-      required: [token, expiresAt, role]
+      required: [token, expiresAt, role, mustChangePassword]
       properties:
         token: { type: string, description: "A signed session token (starts with st_v1.). Send it as a bearer token." }
         expiresAt: { type: string, format: date-time }
         role: { enum: [tenant_admin, dpo] }
+        mustChangePassword:
+          type: boolean
+          description: >-
+            True while the person is still using a password an operator gave them (accounts made or reset with the operator
+            tool). Such a session can only call `/v1/auth/me`, `/v1/auth/refresh` and `/v1/auth/password`; every other route
+            answers 403 with `error` `password_change_required`. Changing the password makes it false.
         recoveryCodes:
           type: array
           description: Only on the first sign-in, shown once.

@@ -55,8 +55,9 @@ describe("signing in for the first time", () => {
     const s = await firstSignIn("tenant-a", await makeStaff(api.A, "dpo"));
     const me = await api.http().get("/v1/auth/me").set(bearer(s.token));
     expect(me.status).toBe(200);
-    expect(me.body).toMatchObject({ role: "dpo", tenantId: api.A.id, scopes: ["dpo", "auditor"] });
-    expect(JSON.stringify(me.body)).not.toMatch(/password|secret|scrypt/i);
+    expect(me.body).toMatchObject({ role: "dpo", tenantId: api.A.id, scopes: ["dpo", "auditor"], mustChangePassword: false });
+    // The flag's own name contains "password"; everything else in the answer must not mention one.
+    expect(JSON.stringify({ ...me.body, mustChangePassword: undefined })).not.toMatch(/password|secret|scrypt/i);
   });
 
   test("a second sign-in asks for the code (no set-up), and a code that was already used is refused", async () => {

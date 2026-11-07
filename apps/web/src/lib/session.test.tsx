@@ -23,14 +23,19 @@ function setup(replies: Record<string, Reply | (() => Reply)> = {}) {
   let ctx: SessionValue | undefined;
   function Grab() {
     ctx = useSession();
-    return <p data-testid="out">{`${ctx.status}|${ctx.role ?? "-"}|${ctx.notice ?? "-"}`}</p>;
+    return (
+      <>
+        <p data-testid="out">{`${ctx.status}|${ctx.role ?? "-"}|${ctx.notice ?? "-"}`}</p>
+        <p data-testid="must">{ctx.mustChangePassword ? "must" : "free"}</p>
+      </>
+    );
   }
   render(
     <SessionProvider baseUrl="https://api.example.org" fetchFn={fetchFn} now={() => NOW}>
       <Grab />
     </SessionProvider>,
   );
-  return { calls, session: () => ctx as SessionValue, out: () => screen.getByTestId("out").textContent };
+  return { calls, session: () => ctx as SessionValue, out: () => screen.getByTestId("out").textContent, must: () => screen.getByTestId("must").textContent };
 }
 const stored = (v: unknown) => sessionStorage.setItem(STORAGE_KEY, typeof v === "string" ? v : JSON.stringify(v));
 const auth = (c: Call) => (c.init.headers as Record<string, string>).Authorization;
@@ -147,6 +152,50 @@ describe("SessionProvider", () => {
     await waitFor(() => expect(t.out()).toBe("signedIn|dpo|-"));
     await act(async () => { await t.session().api.listRequests({}); });
     expect(t.calls[0]?.init.credentials).toBe("omit");
+  });
+});
+
+describe("a session whose password must still be changed", () => {
+  test("is known as such when it is stored, and an ordinary session is not", async () => {
+    stored(info({ mustChangePassword: true }));
+    const t = setup();
+    await waitFor(() => expect(t.out()).toBe("signedIn|dpo|-"));
+    expect(t.must()).toBe("must");
+  });
+
+  test.each([["is missing", undefined], ["is false", false], ["is the text yes", "yes"], ["is 1", 1]])("a stored flag that %s counts as an ordinary session", async (_n, flag) => {
+    stored({ ...info(), ...(flag === undefined ? {} : { mustChangePassword: flag }) });
+    const t = setup();
+    await waitFor(() => expect(t.out()).toBe("signedIn|dpo|-"));
+    expect(t.must()).toBe("free");
+  });
+
+  test("signing in with it keeps the flag in this tab's storage, and signing in with a changed password drops it", async () => {
+    const t = setup();
+    await waitFor(() => expect(t.out()).toBe("signedOut|-|-"));
+    act(() => t.session().signIn(info({ mustChangePassword: true })));
+    expect(t.must()).toBe("must");
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string).mustChangePassword).toBe(true);
+    act(() => t.session().signIn(info({ token: "st_v1.two.sig", mustChangePassword: false })));
+    expect(t.must()).toBe("free");
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string)).not.toHaveProperty("mustChangePassword");
+  });
+
+  test("renewing the session carries the flag the server answered with", async () => {
+    stored(info({ expiresAt: new Date(NOW + 60_000).toISOString(), mustChangePassword: true }));
+    const t = setup({ "/v1/auth/refresh": { body: info({ token: "st_v1.two.sig", mustChangePassword: true }) } });
+    await waitFor(() => expect(t.must()).toBe("must"));
+    await act(async () => { await t.session().api.listRequests({}); });
+    expect(JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string)).toMatchObject({ token: "st_v1.two.sig", mustChangePassword: true });
+    expect(t.must()).toBe("must");
+  });
+
+  test("being signed out leaves no flag behind", async () => {
+    stored(info({ mustChangePassword: true }));
+    const t = setup();
+    await waitFor(() => expect(t.must()).toBe("must"));
+    act(() => t.session().signOut());
+    expect(t.must()).toBe("free");
   });
 });
 
