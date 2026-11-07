@@ -1,6 +1,6 @@
 # Threat model 0009: the staff dashboard
 
-Status: draft. Covers `apps/web` (sign-in, session handling, the rights-request queue, the audit page and the integrations page). The API side is covered by threat models 0005 (webhooks), 0007 (rights requests) and 0008 (staff authentication).
+Status: draft. Covers `apps/web` (sign-in, session handling, the rights-request queue, the audit page, the notices page and the integrations page). The API side is covered by threat models 0005 (webhooks), 0007 (rights requests) and 0008 (staff authentication).
 
 ## Scope
 

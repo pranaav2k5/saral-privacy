@@ -1,3 +1,4 @@
+import type { PublishNoticeRequest } from "./notice-form";
 import type { RequestState, RequestType } from "./states";
 
 export class ApiError extends Error {
@@ -41,6 +42,16 @@ export interface Endpoint {
   events: WebhookEvent[];
   createdAt: string;
   disabledAt: string | null;
+}
+
+export interface NoticeSummary {
+  id: string;
+  version: number;
+  language: string;
+  reviewStatus: "pending-human-review" | "reviewed";
+  canonicalSha256: string;
+  publishedAt: string;
+  purposeKeys: string[];
 }
 
 export type AuditResult =
@@ -135,6 +146,9 @@ export class ApiClient {
 
   verifyAudit = (date?: string) => this.request<AuditResult>("GET", `/v1/audit/verify${date ? `?date=${encodeURIComponent(date)}` : ""}`);
   anchor = (date: string) => this.request<Anchor>("GET", `/v1/audit/merkle-root?date=${encodeURIComponent(date)}`);
+
+  listNotices = () => this.request<NoticeSummary[]>("GET", "/v1/notices");
+  publishNotice = (body: PublishNoticeRequest) => this.request<NoticeSummary>("POST", "/v1/notices", body);
 
   listEndpoints = () => this.request<Endpoint[]>("GET", "/v1/webhook-endpoints");
   createEndpoint = (url: string, events: WebhookEvent[]) => this.request<Endpoint & { secret: string }>("POST", "/v1/webhook-endpoints", { url, events });
