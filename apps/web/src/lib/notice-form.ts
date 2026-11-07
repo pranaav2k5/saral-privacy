@@ -190,7 +190,7 @@ export function problemsFromError(e: unknown): string[] {
   const body = (e.body ?? {}) as { field?: unknown; message?: unknown; errors?: unknown };
   const say = (field: string, message: string) => `${fieldLabel(field)} ${message}.`;
   if (Array.isArray(body.errors) && body.errors.length > 0) {
-    const listed = (body.errors as { field?: unknown; message?: unknown }[]).filter((x) => typeof x.field === "string" && typeof x.message === "string");
+    const listed = (body.errors as { field?: unknown; message?: unknown }[]).filter((x) => typeof x?.field === "string" && typeof x?.message === "string");
     if (listed.length > 0) return listed.map((x) => say(x.field as string, x.message as string));
   }
   if (typeof body.field === "string" && typeof body.message === "string") return [say(body.field, body.message)];

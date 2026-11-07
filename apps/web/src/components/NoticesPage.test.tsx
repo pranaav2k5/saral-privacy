@@ -235,7 +235,7 @@ describe("purposes", () => {
     expect(((posted(v)[0] as Call).body as { purposes: unknown[] }).purposes[0]).toMatchObject({ thirdPartyDisclosure: true, thirdPartyName: "Example Analytics Ltd" });
   });
 
-  test("a third party removed from the list after being chosen is turned back, not sent", async () => {
+  test("a third party removed from the list after being chosen is cleared, and nothing is sent until one is chosen", async () => {
     const v = page();
     await screen.findAllByRole("row");
     fillOrganisation();
@@ -246,8 +246,35 @@ describe("purposes", () => {
     fill("Third parties", "Other Ltd");
     expect((within(purpose(1)).getByLabelText("Third party it is disclosed to") as HTMLSelectElement).value).toBe("");
     publish();
-    expect((await screen.findByRole("alert")).textContent).toContain("Purpose 1: Third party must be one of the third parties listed for the notice.");
+    expect((await screen.findByRole("alert")).textContent).toContain("Purpose 1: Third party must name the organisation it is disclosed to.");
     expect(posted(v)).toHaveLength(0);
+  });
+
+  test("a third party removed from the list and then listed again has to be chosen again", async () => {
+    const v = page();
+    await screen.findAllByRole("row");
+    fillOrganisation();
+    fillPurpose(1);
+    fill("Third parties", "Example Analytics Ltd");
+    fireEvent.click(within(purpose(1)).getByLabelText("Shared with a third party"));
+    fireEvent.change(within(purpose(1)).getByLabelText("Third party it is disclosed to"), { target: { value: "Example Analytics Ltd" } });
+    fill("Third parties", "Other Ltd");
+    fill("Third parties", "Example Analytics Ltd\nOther Ltd");
+    expect((within(purpose(1)).getByLabelText("Third party it is disclosed to") as HTMLSelectElement).value).toBe("");
+    publish();
+    expect((await screen.findByRole("alert")).textContent).toContain("Purpose 1: Third party must name the organisation it is disclosed to.");
+    expect(posted(v)).toHaveLength(0);
+  });
+
+  test("a third party that stays on the list keeps its choice while other lines are edited", async () => {
+    page();
+    await screen.findAllByRole("row");
+    fill("Third parties", "Example Analytics Ltd");
+    fireEvent.click(within(purpose(1)).getByLabelText("Shared with a third party"));
+    fireEvent.change(within(purpose(1)).getByLabelText("Third party it is disclosed to"), { target: { value: "Example Analytics Ltd" } });
+    fill("Third parties", "Example Analytics Ltd\nOther Ltd");
+    fill("Third parties", "  Example Analytics Ltd  \nOther Ltd\n\n");
+    expect((within(purpose(1)).getByLabelText("Third party it is disclosed to") as HTMLSelectElement).value).toBe("Example Analytics Ltd");
   });
 
   test("turning the third-party box off and on again does not bring back the earlier choice", async () => {

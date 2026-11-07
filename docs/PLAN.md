@@ -455,7 +455,7 @@ This section records what exists in the repository against the scope in section 
 
 | P0 item (section 4) | Status | Where | What is missing |
 |---|---|---|---|
-| 1. Notice generator, free public version | Built | `apps/site` (`/notice-generator`), `packages/notice` | Legal and native-speaker review of the English and Hindi templates (they are AI-drafted). In-product versioned notices with a public URL (publish and list routes `POST` and `GET /v1/notices` exist, threat model 0010; the dashboard screen for them does not). |
+| 1. Notice generator, free public version | Built | `apps/site` (`/notice-generator`), `packages/notice` | Legal and native-speaker review of the English and Hindi templates (they are AI-drafted). A public URL for each notice (publishing and listing exist in the API and the dashboard, threat model 0010). |
 | 2. Consent capture, web SDK | Built | `packages/sdk-js` | Age gate for children (Rule 10), hosting and Subresource Integrity, proof that the person controls the identifier, human-reviewed Hindi. |
 | 3. Signed consent receipts | Built | `packages/receipts`, API routes, `/.well-known/jwks.json` | KMS-held signing key (a development key provider exists). Public verifier page. |
 | 4. Tamper-evident audit log | Built (library, database, verify endpoint) | `packages/audit-chain`, migration 0002, `/v1/audit/*` | Nightly anchor job and the S3 Object Lock write; the standalone verifier command-line tool; the performance benchmark planned for week 8. |
