@@ -35,9 +35,9 @@ Browser to API (only with `Authorization: Bearer`, never cookies, `credentials: 
 
 - **Script injection is not blocked by a content security policy.** Next.js inlines small scripts, and a policy that restricts scripts needs a nonce on every response, which would stop the pages being prerendered. Until that is decided, any cross-site scripting bug would let a script read the token from `sessionStorage`. Mitigations in place: no raw HTML, no third-party scripts, and short tokens. Decision needed before a pilot: accept, or move to per-request nonces.
 - **The token is readable by page scripts** (it is in `sessionStorage`). The alternative, an HttpOnly cookie, brings back cross-site request forgery and needs a backend-for-frontend. Not chosen for the first version.
-- **Sign-in has no per-address rate limit** (threat model 0008).
-- **Staff accounts and recovery are done by an operator tool, not from the dashboard**, and staff cannot change their own password (threat model 0008).
-- **Screens for notices, consent search and a consent funnel are not built.**
+- **Sign-in is rate limited per address, in each API instance** (threat model 0011).
+- **Staff accounts and recovery are done by an operator tool, not from the dashboard**, but staff change their own password in the dashboard (threat model 0008).
+- **Screens for consent search and a consent funnel are not built.** Notices are published from the Notices page (threat model 0010).
 - **Sign-out is client-only.** There is no logout endpoint, so a copied token stays valid until it expires (at most 15 minutes).
 - **A first-time authenticator set-up that is started again** replaces the unconfirmed secret on the server, so an authenticator entry scanned earlier stops working. The screen does not warn about this yet.
 - **Recovery codes left on screen past the token's 15 minutes**, or a computer clock more than 15 minutes ahead of the server, make "I have saved these codes" sign the person straight back out without a message.

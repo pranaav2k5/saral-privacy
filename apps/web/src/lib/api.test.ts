@@ -96,6 +96,13 @@ describe("ApiClient", () => {
     expect(err.message).toBe("Too many attempts. Wait a minute and try again.");
   });
 
+  test("changing the password sends the two passwords and nothing else", async () => {
+    const { api, calls } = client(() => ({ body: { token: "t", expiresAt: "x", role: "dpo" } }));
+    await api.changePassword("old pass", "new pass");
+    expect(JSON.parse(calls[0]?.init.body as string)).toEqual({ currentPassword: "old pass", newPassword: "new pass" });
+    expect(calls[0]?.url).toBe("https://api.example.org/v1/auth/password");
+  });
+
   test("a 204 (disabling an endpoint) is success with no body", async () => {
     const { api } = client(() => ({ status: 204, rawBody: "" }));
     await expect(api.disableEndpoint("e1")).resolves.toBeUndefined();
@@ -107,6 +114,7 @@ describe("ApiClient", () => {
     await api.verifyMfa("c", "123456");
     await api.refresh();
     await api.me();
+    await api.changePassword("old pass", "new pass");
     await api.getRequest("r1");
     await api.revealContact("r1");
     await api.verifyAudit();
@@ -116,7 +124,7 @@ describe("ApiClient", () => {
     await api.createEndpoint("https://h.example.org/x", ["consent.granted"]);
     await api.rotateSecret("e1");
     expect(calls.map((c) => `${String(c.init.method)} ${c.url.replace("https://api.example.org", "")}`)).toEqual([
-      "POST /v1/auth/mfa/enroll", "POST /v1/auth/mfa/verify", "POST /v1/auth/refresh", "GET /v1/auth/me", "GET /v1/dsr/r1",
+      "POST /v1/auth/mfa/enroll", "POST /v1/auth/mfa/verify", "POST /v1/auth/refresh", "GET /v1/auth/me", "POST /v1/auth/password", "GET /v1/dsr/r1",
       "POST /v1/dsr/r1/reveal-contact", "GET /v1/audit/verify", "GET /v1/audit/verify?date=2026-11-06", "GET /v1/audit/merkle-root?date=2026-11-06",
       "GET /v1/webhook-endpoints", "POST /v1/webhook-endpoints", "POST /v1/webhook-endpoints/e1/rotate-secret",
     ]);

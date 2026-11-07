@@ -133,6 +133,8 @@ export class ApiClient {
   verifyMfa = (challenge: string, code: string) => this.request<SessionInfo>("POST", "/v1/auth/mfa/verify", { challenge, code });
   refresh = () => this.request<SessionInfo>("POST", "/v1/auth/refresh");
   me = () => this.request<Me>("GET", "/v1/auth/me");
+  /** Answers a new session: the old token, and every other session of the person, no longer work. */
+  changePassword = (currentPassword: string, newPassword: string) => this.request<SessionInfo>("POST", "/v1/auth/password", { currentPassword, newPassword });
 
   listRequests = (f: { state?: RequestState; overdue?: boolean }) => {
     const q = new URLSearchParams();

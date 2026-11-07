@@ -30,10 +30,10 @@ describe("staff_users", () => {
     });
   });
 
-  test("the application role cannot create, delete or change who a person is, their role, or their password", async () => {
+  test("the application role cannot create, delete or change who a person is, their role, or whether they are disabled (it may change a password: see staff-grants.test.ts)", async () => {
     await expect(asApp(db, TENANT_A, (c) => c.query("INSERT INTO staff_users (id, tenant_id, email_blind, email_sealed, role, password_hash) VALUES ($1, $2, $3, $4, 'dpo', $5)", [uid("a", 401), TENANT_A, HEX("d"), SEALED, HASH]))).rejects.toThrow(/permission denied/);
     await expect(asApp(db, TENANT_A, (c) => c.query("DELETE FROM staff_users"))).rejects.toThrow(/permission denied/);
-    for (const col of ["role = 'tenant_admin'", `password_hash = '${HASH}'`, "session_version = 9", "disabled_at = now()", `email_blind = '${HEX("e")}'`]) {
+    for (const col of ["role = 'tenant_admin'", "disabled_at = now()", `email_blind = '${HEX("e")}'`]) {
       await expect(asApp(db, TENANT_A, (c) => c.query(`UPDATE staff_users SET ${col}`))).rejects.toThrow(/permission denied/);
     }
   });

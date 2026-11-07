@@ -135,4 +135,4 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 - Rate limits are counted in each instance's memory, so with several instances a caller can get that many times the limit; no circuit breaker for failing webhook endpoints.
 - No nightly anchor job, no KMS provider, no deployment.
 - Hindi text is an unreviewed draft; the four further languages are not started.
-- Staff accounts are made and recovered by an operator tool that works only with the development key provider, staff cannot change their own password, and the dashboard has no content security policy for scripts (threat models 0008 and 0009).
+- Staff accounts are made and recovered by an operator tool that works only with the development key provider, an operator knows a new account's initial password until the person changes it (nothing forces them to), and the dashboard has no content security policy for scripts (threat models 0008 and 0009).
