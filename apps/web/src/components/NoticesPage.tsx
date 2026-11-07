@@ -28,6 +28,16 @@ export function NoticesPage() {
   const set = <K extends keyof NoticeForm>(key: K, value: NoticeForm[K]) => setForm((f) => ({ ...f, [key]: value }));
   const setPurpose = (i: number, patch: Partial<PurposeForm>) =>
     setForm((f) => ({ ...f, purposes: f.purposes.map((p, j) => (j === i ? { ...p, ...patch } : p)) }));
+  // A third party that leaves the list must not come back as a silent choice if its name is typed again, so purposes that had chosen it are cleared.
+  const setThirdParties = (text: string) =>
+    setForm((f) => {
+      const listed = text.split("\n").map((x) => x.trim()).filter((x) => x !== "");
+      return {
+        ...f,
+        thirdParties: text,
+        purposes: f.purposes.map((p) => (p.thirdPartyName === "" || listed.includes(p.thirdPartyName.trim()) ? p : { ...p, thirdPartyName: "" })),
+      };
+    });
   const refuse = (messages: string[]) => {
     setPublished(null);
     setProblems(messages);
@@ -130,7 +140,7 @@ export function NoticesPage() {
           <Field label="Grievance email" value={form.grievanceEmail} onChange={(v) => set("grievanceEmail", v)} type="email" hint="Where people send complaints about their data." />
           <TextArea label="Grievance address" value={form.grievanceAddress} onChange={(v) => set("grievanceAddress", v)} rows={2} hint="One line, with no line breaks." />
           <Field label="Name of the data protection officer (optional)" value={form.dpoName} onChange={(v) => set("dpoName", v)} />
-          <TextArea label="Third parties" value={form.thirdParties} onChange={(v) => set("thirdParties", v)} hint="Organisations your data is shared with, one per line. Leave empty if there are none." />
+          <TextArea label="Third parties" value={form.thirdParties} onChange={setThirdParties} hint="Organisations your data is shared with, one per line. Leave empty if there are none." />
           <label className="flex min-h-11 items-center gap-2">
             <input type="checkbox" className="size-5" checked={form.processesChildrenData} onChange={(e) => set("processesChildrenData", e.target.checked)} />
             We collect data about children

@@ -1,6 +1,6 @@
 # Low-level design
 
-Status: describes the code as built on 2026-11-06. Sections 9 to 11 are **designed, not built** and say so. The HTTP contract is `docs/design/openapi.yaml` (a test fails when the routes or their access rules drift from it). Architecture and flows are in `docs/design/HLD.md`.
+Status: describes the code as built on 2026-11-06. Sections 9 to 11 describe parts that are built, and each names what is still missing. The HTTP contract is `docs/design/openapi.yaml` (a test fails when the routes or their access rules drift from it). Architecture and flows are in `docs/design/HLD.md`.
 
 ## 1. Repository map
 
@@ -168,7 +168,7 @@ Decisions and parameters are in `docs/adr/0004-staff-authentication.md`; threats
 - Overview: for the officer, the number of open, overdue and soon-due requests and a plain-words alert when any are overdue; for the administrator, the number of active webhook endpoints.
 - Requests (officer): the queue with a status filter and an overdue-only filter, each row with a text deadline badge ("Overdue by 2 days", "Due in 22 days", "Finished") so colour is never the only signal; a detail panel with what the person wrote, a button that reveals the contact (the screen says this is recorded in the audit log), and the legal next steps from the same table as the API (a test reads `apps/api/src/dsr/state.ts` and fails if they differ). Rejecting needs a reason; fulfilling and closing ask for a second click.
 - Audit (both roles): verify the whole chain or one UTC day (a one-day result says that only that day was checked), with failures named by entry number and explained in words, and fetch a daily anchor with advice to keep a copy outside Saral.
-- Notices (administrator): lists the published notices (language and version, when, review status in words, purposes, and the id to give the SDK) and publishes a new version from a form (`NoticesPage`, `lib/notice-form.ts`). The form is turned into the API request by a pure function that reports every gap before anything is sent; the server's refusals are shown in words by the field's place in the request ("Purpose 2: How long, in days must be a whole number..."). A purpose shared with a third party can only name one of the third parties listed for the notice. What was typed stays after a publication so a small change can be published as the next version. Each refusal takes focus again. The overview tells a new administrator that nobody can give consent until a notice is published.
+- Notices (administrator): lists the published notices (language and version, when, review status in words, purposes, and the id to give the SDK) and publishes a new version from a form (`NoticesPage`, `lib/notice-form.ts`). The form is turned into the API request by a pure function that reports every gap before anything is sent; the server's refusals are shown in words by the field's place in the request ("Purpose 2: How long, in days must be a whole number..."). A purpose shared with a third party can only name one of the third parties listed for the notice, and when a party leaves that list every purpose that had chosen it is cleared, so a party typed again later has to be chosen again. What was typed stays after a publication so a small change can be published as the next version. Each refusal takes focus again. The overview tells a new administrator that nobody can give consent until a notice is published.
 - Account (both roles): who is signed in and a form to change the password (`AccountPage`). The form checks what it can before sending (current password given, new one at least 12 characters, the two copies equal, new differs from current), sends only the two passwords, and on success replaces the stored session with the new one the server answers (the old token and every other session have ended) and says so. A wrong current password stays on the page with the server's words (it is a 422, so the dashboard does not read it as an ended session). Nothing typed is kept anywhere but the form's own state, and the fields are emptied after a change.
 - Integrations (administrator): list, add (https only, at least one event), rotate secret and disable, with the signing secret shown once and never stored.
 
@@ -178,7 +178,7 @@ Decisions and parameters are in `docs/adr/0004-staff-authentication.md`; threats
 
 **Configuration.** `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:4000`). Pages are sent with a content security policy that blocks framing, other form targets, a changed base address and plugins (`src/lib/security-headers.ts`). It does not restrict scripts yet; see threat model 0009.
 
-**Not built.** Notice list and publish, consent search, a consent funnel, and a verifier panel. The API client is hand-written to match `docs/design/openapi.yaml`, not generated from it.
+**Not built.** Consent search, a consent funnel, and a verifier panel. The API client is hand-written to match `docs/design/openapi.yaml`, not generated from it.
 
 ## 12. Tests
 
