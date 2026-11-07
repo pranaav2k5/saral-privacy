@@ -18,6 +18,7 @@ import { base32Decode, base32Encode, generateTotpSecret, otpauthUrl, verifyTotp 
 type Staff = {
   id: string; tenant_id: string; email_sealed: Buffer; role: StaffRole; password_hash: string; totp_secret_sealed: Buffer | null;
   totp_confirmed_at: Date | null; last_totp_step: string; failed_attempts: number; locked_until: Date | null; session_version: number; disabled_at: Date | null;
+  must_change_password: boolean;
 };
 
 const INVALID = "invalid credentials";
@@ -36,6 +37,8 @@ export interface SessionResult {
   token: string;
   expiresAt: string;
   role: StaffRole;
+  /** The password is one an operator gave the person, and nothing else can be done until it is changed. */
+  mustChangePassword: boolean;
   recoveryCodes?: string[];
 }
 
@@ -179,7 +182,7 @@ export class StaffService {
     });
     if (result === undefined) throw new UnauthorizedException(INVALID);
     const s = this.issue(result.row, "session", SESSION_SECONDS, p.auth);
-    return { ...s, role: result.row.role, ...(result.recoveryCodes ? { recoveryCodes: result.recoveryCodes } : {}) };
+    return { ...s, role: result.row.role, mustChangePassword: result.row.must_change_password, ...(result.recoveryCodes ? { recoveryCodes: result.recoveryCodes } : {}) };
   }
 
   /** Called by the guard for every request that carries a session token. Returns undefined for anything that is not valid right now. */
@@ -189,7 +192,7 @@ export class StaffService {
     const p = v.payload;
     const row = await this.db.inScope({ tenantId: p.tid }, (c) => this.staffFor(c, p, false));
     if (row === undefined || row.totp_confirmed_at === null || row.role !== p.role) return undefined;
-    return { actor: `staff:${row.id}`, keyId: row.id, tenantId: row.tenant_id, kind: "session", scopes: ROLE_SCOPES[row.role], role: row.role, authAt: p.auth, sessionVersion: row.session_version };
+    return { actor: `staff:${row.id}`, keyId: row.id, tenantId: row.tenant_id, kind: "session", scopes: ROLE_SCOPES[row.role], role: row.role, authAt: p.auth, sessionVersion: row.session_version, mustChangePassword: row.must_change_password };
   }
 
   async refresh(auth: AuthContext): Promise<SessionResult> {
@@ -198,7 +201,7 @@ export class StaffService {
     }
     if (Math.floor(Date.now() / 1000) - auth.authAt >= SESSION_MAX_SECONDS) throw new UnauthorizedException("the session has reached its limit; sign in again");
     const s = this.issue({ id: auth.keyId, tenant_id: auth.tenantId, role: auth.role, session_version: auth.sessionVersion }, "session", SESSION_SECONDS, auth.authAt);
-    return { ...s, role: auth.role };
+    return { ...s, role: auth.role, mustChangePassword: auth.mustChangePassword === true };
   }
 
   /**
@@ -230,7 +233,7 @@ export class StaffService {
       }
       if (await verifyPassword(next, row.password_hash)) return { kind: "same" as const };
       const changed = await c.query<{ session_version: number }>(
-        "UPDATE staff_users SET password_hash = $2, session_version = session_version + 1, failed_attempts = 0, locked_until = NULL WHERE id = $1 RETURNING session_version",
+        "UPDATE staff_users SET password_hash = $2, session_version = session_version + 1, failed_attempts = 0, locked_until = NULL, must_change_password = false WHERE id = $1 RETURNING session_version",
         [row.id, await hashPassword(next)],
       );
       await this.record(c, row, "staff.password_changed");
@@ -248,11 +251,11 @@ export class StaffService {
       case "same":
         throw bad("newPassword", "must be different from the current password");
       case "changed":
-        return { ...this.issue(outcome.row, "session", SESSION_SECONDS, authAt), role };
+        return { ...this.issue(outcome.row, "session", SESSION_SECONDS, authAt), role, mustChangePassword: false };
     }
   }
 
-  async me(auth: AuthContext): Promise<{ staffId: string; email: string | null; role: StaffRole | null; tenantId: string; scopes: Scope[] }> {
+  async me(auth: AuthContext): Promise<{ staffId: string; email: string | null; role: StaffRole | null; tenantId: string; scopes: Scope[]; mustChangePassword: boolean }> {
     let email: string | null = null;
     if (auth.kind === "session") {
       email = await this.db.inScope({ tenantId: auth.tenantId }, async (c) => {
@@ -260,6 +263,6 @@ export class StaffService {
         return r ? decryptContact(this.keys.contactKey(), auth.tenantId, `email:${auth.keyId}`, new Uint8Array(r.email_sealed)) : null;
       });
     }
-    return { staffId: auth.keyId, email, role: auth.role ?? null, tenantId: auth.tenantId, scopes: auth.scopes };
+    return { staffId: auth.keyId, email, role: auth.role ?? null, tenantId: auth.tenantId, scopes: auth.scopes, mustChangePassword: auth.mustChangePassword === true };
   }
 }

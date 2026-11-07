@@ -27,6 +27,20 @@ describe("what the application role may change about a staff account", () => {
     expect(r).toEqual({ password_hash: HASH("c"), session_version: 2 });
   });
 
+  test("and the flag that says the password must be changed, because changing the password clears it", async () => {
+    await db.owner.query("UPDATE staff_users SET must_change_password = true WHERE id = $1", [STAFF]);
+    const r = await asApp(db, TENANT_A, async (c) => {
+      await c.query("UPDATE staff_users SET must_change_password = false WHERE id = $1", [STAFF]);
+      return (await c.query("SELECT must_change_password FROM staff_users WHERE id = $1", [STAFF])).rows[0];
+    });
+    expect(r).toEqual({ must_change_password: false });
+  });
+
+  test("an account starts without the flag unless the operator sets it", async () => {
+    const r = await db.owner.query("SELECT column_default, is_nullable FROM information_schema.columns WHERE table_name = 'staff_users' AND column_name = 'must_change_password'");
+    expect(r.rows[0]).toEqual({ column_default: "false", is_nullable: "NO" });
+  });
+
   test.each([
     ["role", "role = 'tenant_admin'"],
     ["email_blind", `email_blind = '${"f".repeat(64)}'`],

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Post } from "@nestjs/common";
-import { Auth, Public, Scopes, type AuthContext } from "../auth/access.js";
+import { AllowPendingPasswordChange, Auth, Public, Scopes, type AuthContext } from "../auth/access.js";
 import { bad, objectBody } from "../http/validate.js";
 import { Throttle } from "../ratelimit/throttle.js";
 import { PASSWORD_MAX } from "./password.js";
@@ -54,6 +54,7 @@ export class AuthController {
   @Post("refresh")
   @HttpCode(200)
   @Scopes("tenant_admin", "dpo")
+  @AllowPendingPasswordChange()
   refresh(@Auth() auth: AuthContext) {
     return this.staff.refresh(auth);
   }
@@ -62,6 +63,7 @@ export class AuthController {
   @Post("password")
   @HttpCode(200)
   @Scopes("tenant_admin", "dpo")
+  @AllowPendingPasswordChange()
   changePassword(@Auth() auth: AuthContext, @Body() raw: unknown) {
     const body = objectBody(raw);
     // The new password may be longer than the policy allows, so that the policy can say so in words.
@@ -70,6 +72,7 @@ export class AuthController {
 
   @Get("me")
   @Scopes("tenant_admin", "dpo")
+  @AllowPendingPasswordChange()
   me(@Auth() auth: AuthContext) {
     return this.staff.me(auth);
   }

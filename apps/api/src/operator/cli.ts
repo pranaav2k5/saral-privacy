@@ -8,6 +8,8 @@ export interface Io {
   err(line: string): void;
 }
 
+const CHANGE_PASSWORD = "They must choose their own password before they can use the dashboard.";
+
 const USAGE = `Usage:
   operator tenant:create  --name <name> --slug <short-name>
   operator staff:create   --tenant <short-name> --email <email> --role <tenant_admin|dpo>
@@ -95,12 +97,14 @@ export async function runOperator(argv: readonly string[], env: NodeJS.ProcessEn
         io.out(`Created a ${f("role")} account for ${made.email} in "${f("tenant")}". Id: ${made.id}`);
         io.out(`Initial password (shown once): ${made.password}`);
         io.out("They set up an authenticator app when they first sign in.");
+        io.out(CHANGE_PASSWORD);
         break;
       }
       case "staff:reset": {
         const done = await resetStaff(client, keys, { slug: f("tenant"), email: f("email") });
         io.out(`Reset the account for ${done.email} in "${f("tenant")}". Their sessions have ended and they set up an authenticator again.`);
         io.out(`Initial password (shown once): ${done.password}`);
+        io.out(CHANGE_PASSWORD);
         break;
       }
       case "staff:disable":

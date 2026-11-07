@@ -21,6 +21,21 @@ const submit = () => fireEvent.click(screen.getByRole("button", { name: "Change 
 const posted = (v: ReturnType<typeof page>) => v.callsTo("POST", "/v1/auth/password");
 const storedToken = () => (JSON.parse(sessionStorage.getItem(STORAGE_KEY) as string) as { token: string }).token;
 
+describe("when an operator chose the password", () => {
+  test("the page says so, and asks for a password of their own before anything else", async () => {
+    renderScreen(<AccountPage />, { role: "dpo", mustChangePassword: true, routes: { "GET /v1/auth/me": { body: ME } } });
+    const note = await screen.findByRole("note");
+    expect(note.textContent).toContain("An operator gave you this password");
+    expect(note.textContent).toContain("Choose your own to continue");
+  });
+
+  test("and says nothing of the kind to a person who chose their own", async () => {
+    page();
+    await screen.findByText("officer@example.org");
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+});
+
 describe("who is signed in", () => {
   test("says which account and in what role, in words", async () => {
     page();
