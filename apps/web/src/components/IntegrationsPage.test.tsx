@@ -7,6 +7,18 @@ const E1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const E2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const live = { id: E1, url: "https://hooks.example.org/saral", events: ["consent.granted", "consent.withdrawn"], createdAt: "2026-10-01T08:00:00.000Z", disabledAt: null };
 const off = { id: E2, url: "https://old.example.org/hook", events: ["dsr.submitted"], createdAt: "2026-09-01T08:00:00.000Z", disabledAt: "2026-10-15T08:00:00.000Z" };
+const stopped = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", url: "https://flaky.example.org/hook", events: ["consent.granted"], createdAt: "2026-08-01T08:00:00.000Z", disabledAt: "2026-10-20T08:00:00.000Z", disabledReason: "failures" };
+const D1 = "11111111-1111-4111-8111-111111111111";
+const D2 = "22222222-2222-4222-8222-222222222222";
+const D3 = "33333333-3333-4333-8333-333333333333";
+const D4 = "44444444-4444-4444-8444-444444444444";
+const delivery = (over: Record<string, unknown>) => ({ id: D1, eventType: "consent.granted", state: "delivered", attempts: 1, createdAt: "2026-11-05T09:00:00.000Z", nextAttemptAt: null, deliveredAt: "2026-11-05T09:00:05.000Z", lastStatus: 200, lastError: null, ...over });
+const LOG = [
+  delivery({ id: D1, state: "failed", attempts: 15, deliveredAt: null, lastStatus: 500, lastError: "HTTP 500", createdAt: "2026-11-05T09:00:00.000Z" }),
+  delivery({ id: D2, eventType: "consent.withdrawn", state: "pending", attempts: 3, deliveredAt: null, lastStatus: 503, lastError: "HTTP 503", nextAttemptAt: "2026-11-05T12:00:00.000Z", createdAt: "2026-11-05T08:00:00.000Z" }),
+  delivery({ id: D3, state: "delivered", createdAt: "2026-11-05T07:00:00.000Z", deliveredAt: "2026-11-05T07:00:02.000Z" }),
+  delivery({ id: D4, eventType: "dsr.submitted", state: "pending", attempts: 0, deliveredAt: null, lastStatus: null, lastError: null, nextAttemptAt: "2026-11-05T06:00:01.000Z", createdAt: "2026-11-05T06:00:00.000Z" }),
+];
 const SHOWN_ONCE = ["whsec", "placeholder", "for", "tests"].join("_"); // built at runtime so secret scanners have nothing to flag
 
 const page = (routes: Record<string, Route | Route[]> = {}) => renderScreen(<IntegrationsPage />, { role: "tenant_admin", routes: { "GET /v1/webhook-endpoints": { body: [live, off] }, ...routes } });
@@ -155,5 +167,150 @@ describe("rotating and disabling", () => {
     fireEvent.click(screen.getByRole("button", { name: `Disable ${live.url}` }));
     fireEvent.click(screen.getByRole("button", { name: "Yes, disable" }));
     expect((await screen.findByRole("alert")).textContent).toBe("That could not be found.");
+  });
+});
+
+describe("why an endpoint is off", () => {
+  test("one that Saral switched off after repeated failures says so, and one an administrator disabled just says disabled", async () => {
+    page({ "GET /v1/webhook-endpoints": { body: [live, off, stopped] } });
+    const rows = await screen.findAllByRole("row");
+    expect(rows[2]?.textContent).toContain(`Disabled ${when(off.disabledAt)}`);
+    expect(rows[3]?.textContent).toContain(`Switched off ${when(stopped.disabledAt)} after repeated failures`);
+    expect(rows[3]?.textContent).not.toMatch(/Disabled/);
+  });
+});
+
+describe("the delivery log", () => {
+  const open = async (url = live.url, routes: Record<string, Route | Route[]> = {}) => {
+    const v = page({ [`GET /v1/webhook-endpoints/${E1}/deliveries`]: { body: LOG }, ...routes });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Deliveries for ${url}` }));
+    return v;
+  };
+  const region = () => screen.getByRole("region", { name: /^Deliveries to / });
+
+  test("every endpoint, switched off or not, has a button for it", async () => {
+    page({ "GET /v1/webhook-endpoints": { body: [live, off, stopped] } });
+    await screen.findAllByRole("row");
+    for (const ep of [live, off, stopped]) expect(screen.getByRole("button", { name: `Deliveries for ${ep.url}` })).toBeTruthy();
+  });
+
+  test("opens under the list and names the endpoint, then shows each delivery in words: what, when, what happened", async () => {
+    const v = await open();
+    const log = await screen.findByRole("region", { name: `Deliveries to ${live.url}` });
+    const rows = await within(log).findAllByRole("row");
+    expect(rows).toHaveLength(1 + LOG.length);
+    expect(rows[1]?.textContent).toContain("Consent given");
+    expect(rows[1]?.textContent).toContain(when(LOG[0]?.createdAt as string));
+    expect(rows[1]?.textContent).toContain("Failed after 15 tries");
+    expect(rows[1]?.textContent).toContain("HTTP 500");
+    expect(rows[2]?.textContent).toContain("Consent withdrawn");
+    expect(rows[2]?.textContent).toContain("Waiting to be tried again");
+    expect(rows[2]?.textContent).toContain("3 tries so far");
+    expect(rows[2]?.textContent).toContain(`next try ${when("2026-11-05T12:00:00.000Z")}`);
+    expect(rows[3]?.textContent).toContain(`Delivered ${when("2026-11-05T07:00:02.000Z")}`);
+    expect(rows[4]?.textContent).toContain("Request received");
+    expect(rows[4]?.textContent).toContain("Waiting to be sent");
+    expect(v.callsTo("GET", `/v1/webhook-endpoints/${E1}/deliveries`)).toHaveLength(1);
+  });
+
+  test("while loading it says so; with nothing sent it says that; a failure can be tried again", async () => {
+    await open(live.url, { [`GET /v1/webhook-endpoints/${E1}/deliveries`]: [{ status: 500, body: { message: "The database is busy." } }, { body: [] }] });
+    expect((await screen.findByText("The database is busy.")).closest("[role=alert]")).toBeTruthy();
+    fireEvent.click(within(region()).getByRole("button", { name: "Try again" }));
+    expect(await within(region()).findByText("Nothing has been sent to this endpoint yet.")).toBeTruthy();
+  });
+
+  test("has the word loading while it waits", async () => {
+    await open(live.url, { [`GET /v1/webhook-endpoints/${E1}/deliveries`]: [{ body: [], wait: Promise.resolve() }] });
+    expect(within(region()).getByRole("status").textContent).toBe("Loading deliveries…");
+    await within(region()).findByText("Nothing has been sent to this endpoint yet.");
+  });
+
+  test("Close hides it, and opening another endpoint's log replaces the first", async () => {
+    page({
+      "GET /v1/webhook-endpoints": { body: [live, stopped] },
+      [`GET /v1/webhook-endpoints/${E1}/deliveries`]: { body: LOG },
+      [`GET /v1/webhook-endpoints/${stopped.id}/deliveries`]: { body: [] },
+    });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Deliveries for ${live.url}` }));
+    await screen.findByRole("region", { name: `Deliveries to ${live.url}` });
+    fireEvent.click(screen.getByRole("button", { name: `Deliveries for ${stopped.url}` }));
+    expect(await screen.findByRole("region", { name: `Deliveries to ${stopped.url}` })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: `Deliveries to ${live.url}` })).toBeNull();
+    fireEvent.click(within(region()).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: /^Deliveries to / })).toBeNull();
+  });
+
+  test("never shows what was sent: the log has no payload to show", async () => {
+    await open();
+    await screen.findByRole("region", { name: `Deliveries to ${live.url}` });
+    await screen.findByText("Failed after 15 tries");
+    expect(region().textContent).not.toMatch(/consentId|payload|whsec_/);
+  });
+});
+
+describe("sending a failed delivery again", () => {
+  const open = async (endpoints: unknown[] = [live], routes: Record<string, Route | Route[]> = {}) => {
+    const v = page({ "GET /v1/webhook-endpoints": { body: endpoints }, [`GET /v1/webhook-endpoints/${E1}/deliveries`]: { body: LOG }, ...routes });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Deliveries for ${live.url}` }));
+    await screen.findByRole("region", { name: `Deliveries to ${live.url}` });
+    // The log is on screen as soon as it is opened; wait until its rows are in.
+    await screen.findByText("Failed after 15 tries");
+    return v;
+  };
+
+  test("is offered for a failed delivery and for no other", async () => {
+    await open();
+    const log = screen.getByRole("region", { name: `Deliveries to ${live.url}` });
+    const buttons = within(log).getAllByRole("button", { name: /^Send again/ });
+    expect(buttons).toHaveLength(1);
+    expect(within(within(log).getAllByRole("row")[1] as HTMLElement).getByRole("button", { name: /^Send again/ })).toBeTruthy();
+    expect(buttons[0]?.textContent).toContain("Send again");
+    expect(buttons[0]?.textContent).toContain(`Consent given, ${when(LOG[0]?.createdAt as string)}`);
+  });
+
+  test("is not offered once the endpoint is disabled, because nothing can be sent to it", async () => {
+    const stoppedLog = [delivery({ id: D1, state: "failed", attempts: 15, deliveredAt: null, lastStatus: 500, lastError: "HTTP 500" })];
+    page({ "GET /v1/webhook-endpoints": { body: [stopped] }, [`GET /v1/webhook-endpoints/${stopped.id}/deliveries`]: { body: stoppedLog } });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Deliveries for ${stopped.url}` }));
+    await screen.findByRole("region", { name: `Deliveries to ${stopped.url}` });
+    await screen.findByText("Failed after 15 tries");
+    expect(screen.queryByRole("button", { name: /^Send again/ })).toBeNull();
+  });
+
+  test("asks the API for that delivery of that endpoint, says it is queued, and reloads the log", async () => {
+    const after = LOG.map((d) => (d.id === D1 ? { ...d, state: "pending", attempts: 0, nextAttemptAt: "2026-11-06T10:00:00.000Z" } : d));
+    const v = await open([live], {
+      [`GET /v1/webhook-endpoints/${E1}/deliveries`]: [{ body: LOG }, { body: after }],
+      [`POST /v1/webhook-endpoints/${E1}/deliveries/${D1}/redeliver`]: { body: { id: D1, state: "pending" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Send again/ }));
+    expect(await screen.findByText(/It is queued again and will be sent shortly\./)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^Send again/ })).toBeNull());
+    expect(v.callsTo("POST", `/v1/webhook-endpoints/${E1}/deliveries/${D1}/redeliver`)).toHaveLength(1);
+    expect(v.callsTo("GET", `/v1/webhook-endpoints/${E1}/deliveries`)).toHaveLength(2);
+  });
+
+  test("while it is being sent the button cannot be pressed twice", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const v = await open([live], { [`POST /v1/webhook-endpoints/${E1}/deliveries/${D1}/redeliver`]: { body: { id: D1, state: "pending" }, wait: gate } });
+    const button = screen.getByRole("button", { name: /^Send again/ });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() => expect((screen.getByRole("button", { name: /^Send again/ }) as HTMLButtonElement).disabled).toBe(true));
+    release();
+    await waitFor(() => expect(v.callsTo("POST", `/v1/webhook-endpoints/${E1}/deliveries/${D1}/redeliver`)).toHaveLength(1));
+  });
+
+  test("a refusal is shown in the server's words and the log stays as it was", async () => {
+    await open([live], { [`POST /v1/webhook-endpoints/${E1}/deliveries/${D1}/redeliver`]: { status: 409, body: { error: "not_failed", message: "only a delivery that has failed can be sent again" } } });
+    fireEvent.click(screen.getByRole("button", { name: /^Send again/ }));
+    expect((await screen.findByRole("alert")).textContent).toBe("only a delivery that has failed can be sent again");
+    expect(screen.getByRole("button", { name: /^Send again/ })).toBeTruthy();
   });
 });

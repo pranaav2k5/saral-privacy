@@ -5,6 +5,7 @@ import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
 import { MAX_ATTEMPTS, nextAttemptDelaySeconds } from "./schedule.js";
 import { endpointSecret, signWebhook } from "./signature.js";
 import { WEBHOOK_HTTP, type WebhookHttp } from "./tokens.js";
+import { WebhookService } from "./webhook.service.js";
 
 const BATCH = 50;
 /** One tenant with a large backlog may take at most this many slots of one claim, so it cannot starve the others. */
@@ -36,6 +37,7 @@ export class WebhookWorker {
     private readonly db: Database,
     @Inject(KEY_PROVIDER) private readonly keys: KeyProvider,
     @Inject(WEBHOOK_HTTP) private readonly http: WebhookHttp,
+    private readonly webhooks: WebhookService,
   ) {}
 
   /** Source of jitter for retry delays; tests replace it. */
@@ -106,11 +108,21 @@ export class WebhookWorker {
           }
           const outcome = await this.deliver(d, endpoints.get(d.endpoint_id), now);
           result[outcome] += 1;
+          if (outcome === "failed") await this.disableIfFailing(d);
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
     return result;
+  }
+
+  /** After a delivery has failed for good: an endpoint whose recent deliveries all failed is switched off. A problem here must not stop the run. */
+  private async disableIfFailing(d: Claimed): Promise<void> {
+    try {
+      await this.webhooks.disableIfFailing(d.tenant_id, d.endpoint_id);
+    } catch (e) {
+      console.error("webhook worker: could not check the endpoint:", e instanceof Error ? e.message : e);
+    }
   }
 
   /** Time one endpoint may spend per run before the rest of its claimed deliveries are released. Tests change it. */

@@ -1,7 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query } from "@nestjs/common";
 import { Auth, Scopes, type AuthContext } from "../auth/access.js";
 import { bad, objectBody, uuidParam } from "../http/validate.js";
-import { WEBHOOK_EVENTS, WebhookService, type WebhookEvent } from "./webhook.service.js";
+import { DEFAULT_DELIVERY_LIMIT, DELIVERY_STATES, MAX_DELIVERY_LIMIT, WEBHOOK_EVENTS, WebhookService, type DeliveryState, type WebhookEvent } from "./webhook.service.js";
 
 @Controller("v1/webhook-endpoints")
 export class WebhookEndpointsController {
@@ -34,6 +34,28 @@ export class WebhookEndpointsController {
   @Scopes("tenant_admin")
   async disable(@Auth() auth: AuthContext, @Param("id") id: string): Promise<void> {
     await this.webhooks.disable(auth.tenantId, auth.actor, uuidParam(id, "id"));
+  }
+
+  /** The most recent deliveries of one endpoint, newest first, without their payloads. */
+  @Get(":id/deliveries")
+  @Scopes("tenant_admin")
+  deliveries(@Auth() auth: AuthContext, @Param("id") id: string, @Query("state") state?: unknown, @Query("limit") limit?: unknown) {
+    const endpointId = uuidParam(id, "id");
+    if (state !== undefined && !DELIVERY_STATES.includes(state as DeliveryState)) throw bad("state", `must be one of: ${DELIVERY_STATES.join(", ")}`);
+    let n = DEFAULT_DELIVERY_LIMIT;
+    if (limit !== undefined) {
+      if (typeof limit !== "string" || !/^[1-9][0-9]{0,2}$/.test(limit) || Number(limit) > MAX_DELIVERY_LIMIT) throw bad("limit", `must be a whole number from 1 to ${String(MAX_DELIVERY_LIMIT)}`);
+      n = Number(limit);
+    }
+    return this.webhooks.deliveries(auth.tenantId, endpointId, state as DeliveryState | undefined, n);
+  }
+
+  /** Sends a failed delivery again: it goes back in the queue with its attempts unused. */
+  @Post(":id/deliveries/:deliveryId/redeliver")
+  @HttpCode(200)
+  @Scopes("tenant_admin")
+  redeliver(@Auth() auth: AuthContext, @Param("id") id: string, @Param("deliveryId") deliveryId: string) {
+    return this.webhooks.redeliver(auth.tenantId, auth.actor, uuidParam(id, "id"), uuidParam(deliveryId, "deliveryId"));
   }
 
   /** Issues a new signing secret, shown once. The old secret stops working at once. */
