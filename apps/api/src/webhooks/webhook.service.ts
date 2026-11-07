@@ -12,6 +12,12 @@ import { WebhookUrlError, assertWebhookUrl, type Resolver } from "./url-guard.js
 export type WebhookEvent = "consent.granted" | "consent.withdrawn" | "dsr.submitted" | "dsr.transitioned";
 export const WEBHOOK_EVENTS: readonly WebhookEvent[] = ["consent.granted", "consent.withdrawn", "dsr.submitted", "dsr.transitioned"];
 const MAX_ENDPOINTS = 10;
+/** An endpoint is disabled when this many of its most recent finished deliveries, with none delivered among them, all failed for good. */
+export const AUTO_DISABLE_AFTER = 10;
+export const DELIVERY_STATES = ["pending", "delivered", "failed"] as const;
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
+export const DEFAULT_DELIVERY_LIMIT = 50;
+export const MAX_DELIVERY_LIMIT = 100;
 
 export interface EndpointView {
   id: string;
@@ -19,6 +25,22 @@ export interface EndpointView {
   events: WebhookEvent[];
   createdAt: string;
   disabledAt: string | null;
+  /** `admin` when the administrator disabled it (also for endpoints disabled before reasons were kept), `failures` when Saral did. */
+  disabledReason: "admin" | "failures" | null;
+}
+
+/** What the delivery log shows. The payload is left out on purpose: it is not needed to understand what happened. */
+export interface DeliveryView {
+  id: string;
+  eventType: WebhookEvent;
+  state: DeliveryState;
+  attempts: number;
+  createdAt: string;
+  /** Only while pending: when the next try is due. */
+  nextAttemptAt: string | null;
+  deliveredAt: string | null;
+  lastStatus: number | null;
+  lastError: string | null;
 }
 
 @Injectable()
@@ -60,7 +82,7 @@ export class WebhookService {
         actorType: "system", actorId: actor, action: "webhook.endpoint_created", refTable: "webhook_endpoints", refId: id,
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, url, [...events].sort(), 1])),
       });
-      return { id, url, events, createdAt: row.created_at.toISOString(), disabledAt: null, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, 1)) };
+      return { id, url, events, createdAt: row.created_at.toISOString(), disabledAt: null, disabledReason: null, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, 1)) };
     });
   }
 
@@ -69,7 +91,7 @@ export class WebhookService {
     await this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
-        "UPDATE webhook_endpoints SET disabled_at = now() WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version", [id]);
+        "UPDATE webhook_endpoints SET disabled_at = now(), disabled_reason = 'admin' WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version", [id]);
       const e = r.rows[0];
       if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
       await this.audit.append(c, tenantId, {
@@ -97,8 +119,83 @@ export class WebhookService {
 
   async list(tenantId: string): Promise<EndpointView[]> {
     return this.db.inScope({ tenantId }, async (c) => {
-      const r = await c.query<{ id: string; url: string; events: WebhookEvent[]; created_at: Date; disabled_at: Date | null }>("SELECT id, url, events, created_at, disabled_at FROM webhook_endpoints ORDER BY created_at");
-      return r.rows.map((e) => ({ id: e.id, url: e.url, events: e.events, createdAt: e.created_at.toISOString(), disabledAt: e.disabled_at ? e.disabled_at.toISOString() : null }));
+      const r = await c.query<{ id: string; url: string; events: WebhookEvent[]; created_at: Date; disabled_at: Date | null; disabled_reason: "admin" | "failures" | null }>("SELECT id, url, events, created_at, disabled_at, disabled_reason FROM webhook_endpoints ORDER BY created_at");
+      return r.rows.map((e) => ({
+        id: e.id, url: e.url, events: e.events, createdAt: e.created_at.toISOString(),
+        disabledAt: e.disabled_at ? e.disabled_at.toISOString() : null,
+        // Endpoints disabled before reasons were kept have none recorded, and were disabled by their administrator.
+        disabledReason: e.disabled_at === null ? null : (e.disabled_reason ?? "admin"),
+      }));
+    });
+  }
+
+  /** The most recent deliveries of one endpoint, newest first, optionally of one state. Also for a disabled endpoint, so its history stays readable. */
+  async deliveries(tenantId: string, endpointId: string, state: DeliveryState | undefined, limit: number): Promise<DeliveryView[]> {
+    return this.db.inScope({ tenantId }, async (c) => {
+      await this.requireEndpoint(c, endpointId);
+      const r = await c.query<{ id: string; event_type: WebhookEvent; state: DeliveryState; attempts: number; created_at: Date; next_attempt_at: Date; delivered_at: Date | null; last_status: number | null; last_error: string | null }>(
+        `SELECT id, event_type, state, attempts, created_at, next_attempt_at, delivered_at, last_status, last_error FROM webhook_deliveries
+         WHERE endpoint_id = $1 AND ($2::text IS NULL OR state = $2) ORDER BY created_at DESC, id LIMIT $3`,
+        [endpointId, state ?? null, limit],
+      );
+      return r.rows.map((d) => ({
+        id: d.id, eventType: d.event_type, state: d.state, attempts: d.attempts, createdAt: d.created_at.toISOString(),
+        nextAttemptAt: d.state === "pending" ? d.next_attempt_at.toISOString() : null,
+        deliveredAt: d.delivered_at ? d.delivered_at.toISOString() : null, lastStatus: d.last_status, lastError: d.last_error,
+      }));
+    });
+  }
+
+  private async requireEndpoint(c: pg.PoolClient, endpointId: string): Promise<{ url: string; events: WebhookEvent[]; secret_version: number; disabled_at: Date | null }> {
+    const e = (await c.query<{ url: string; events: WebhookEvent[]; secret_version: number; disabled_at: Date | null }>("SELECT url, events, secret_version, disabled_at FROM webhook_endpoints WHERE id = $1", [endpointId])).rows[0];
+    if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
+    return e;
+  }
+
+  /**
+   * Puts a failed delivery back in the queue with no attempts used, so the worker sends it again with the same idempotency key
+   * (a receiver that already acted on it will recognise it). Only a failed delivery of an endpoint that is still enabled.
+   * The database lets the application role do exactly this to a delivery, and nothing else.
+   */
+  async redeliver(tenantId: string, actor: string, endpointId: string, deliveryId: string): Promise<{ id: string; state: "pending" }> {
+    return this.db.inScope({ tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
+      const endpoint = await this.requireEndpoint(c, endpointId);
+      const d = (await c.query<{ state: DeliveryState }>("SELECT state FROM webhook_deliveries WHERE id = $1 AND endpoint_id = $2 FOR UPDATE", [deliveryId, endpointId])).rows[0];
+      if (d === undefined) throw new NotFoundException({ error: "not_found", message: "delivery not found" });
+      if (endpoint.disabled_at !== null) throw new ConflictException({ error: "endpoint_disabled", message: "this endpoint is disabled, so nothing can be sent to it" });
+      if (d.state !== "failed") throw new ConflictException({ error: "not_failed", message: "only a delivery that has failed can be sent again" });
+      await c.query("UPDATE webhook_deliveries SET state = 'pending', attempts = 0, next_attempt_at = now() WHERE id = $1", [deliveryId]);
+      await this.audit.append(c, tenantId, {
+        actorType: "system", actorId: actor, action: "webhook.delivery_redelivered", refTable: "webhook_deliveries", refId: deliveryId,
+        payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_delivery", 1, tenantId, endpointId, deliveryId, "redelivered"])),
+      });
+      return { id: deliveryId, state: "pending" as const };
+    });
+  }
+
+  /**
+   * Called by the worker when a delivery has just failed for good. If the endpoint's last ten finished deliveries have all
+   * failed (a delivered one among them shows it still works for some events), it is disabled, for the same reason an administrator
+   * would: nothing more is sent, and its waiting events are closed. It cannot be switched on again; register it anew (a new secret).
+   */
+  async disableIfFailing(tenantId: string, endpointId: string): Promise<boolean> {
+    return this.db.inScope({ tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
+      const recent = await c.query<{ state: DeliveryState }>(
+        "SELECT state FROM webhook_deliveries WHERE endpoint_id = $1 AND state IN ('delivered', 'failed') ORDER BY created_at DESC, id LIMIT $2",
+        [endpointId, AUTO_DISABLE_AFTER],
+      );
+      if (recent.rows.length < AUTO_DISABLE_AFTER || recent.rows.some((r) => r.state !== "failed")) return false;
+      const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
+        "UPDATE webhook_endpoints SET disabled_at = now(), disabled_reason = 'failures' WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version", [endpointId]);
+      const e = r.rows[0];
+      if (e === undefined) return false;
+      await this.audit.append(c, tenantId, {
+        actorType: "system", actorId: "system:webhook-worker", action: "webhook.endpoint_auto_disabled", refTable: "webhook_endpoints", refId: endpointId,
+        payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, endpointId, e.url, [...e.events].sort(), e.secret_version])),
+      });
+      return true;
     });
   }
 }

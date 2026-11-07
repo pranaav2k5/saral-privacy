@@ -4,7 +4,7 @@ Status: draft, covers `apps/api/src/webhooks` and migration 0004. Contract: `web
 
 ## Scope
 
-Registering endpoints, queuing events with the consent that caused them, signing, delivering with retries, and the worker's database role. Out of scope: delivery logs for tenants, manual redelivery, secret rotation endpoints (the secret version column exists; no route changes it yet).
+Registering endpoints, queuing events with the consent that caused them, signing, delivering with retries, and the worker's database role. The delivery log for tenants, sending a failed delivery again, and switching off an endpoint that keeps failing (migration 0010) are in scope.
 
 ## Assets
 
@@ -28,15 +28,21 @@ The tenant's endpoint secrets; the integrity and confidentiality of events; the 
 | Denial of service | Many endpoints or events; two registrations racing past the cap. | At most 10 active endpoints per tenant, counted and inserted under a per-tenant lock; batches of 50 per poll. | `webhooks.e2e.test.ts`: 16 concurrent registrations give exactly 10 |
 | Repudiation | Registering, disabling or rotating an endpoint cannot be traced. | `webhook.endpoint_created`, `webhook.endpoint_disabled` and `webhook.endpoint_rotated` are audit events. | `webhooks.e2e.test.ts` |
 | Information disclosure | An endpoint nobody can turn off keeps receiving consent events (a mistyped URL, a lost secret, a domain later taken over). | `DELETE /v1/webhook-endpoints/{id}` disables it and frees its slot; events still waiting for it are closed; `rotate-secret` replaces a lost or leaked secret. | `webhooks.e2e.test.ts`: disabling and rotating |
+| Elevation of privilege | The application role is used to rewrite delivery history (mark a failed delivery delivered, change what is sent or where, or touch another tenant's rows). | Migration 0010 gives it `UPDATE` on only `state`, `attempts` and `next_attempt_at`, and a trigger refuses every change except failed to pending with no attempts used and a due time within a minute; row-level security keeps it to its own tenant. The worker role is not held to the trigger. | `webhooks.test.ts` (database): sending a failed delivery again |
+| Repudiation | Redelivering a delivery, or the switching off of an endpoint by Saral, cannot be traced. | `webhook.delivery_redelivered` and `webhook.endpoint_auto_disabled` are audit events; the second names `system:webhook-worker`, so it cannot be mistaken for an administrator's `webhook.endpoint_disabled`. | `webhook-deliveries.e2e.test.ts` |
+| Denial of service | An endpoint that always fails costs the worker 15 attempts for every event, for ever. | After ten deliveries in a row have failed for good (none delivered among them), the endpoint is disabled and its waiting events are closed. | `webhook-deliveries.e2e.test.ts`: an endpoint that keeps failing |
 | Denial of service (cross-tenant) | A worker that died while sending the 15th attempt leaves a row at 15 attempts; claiming it again would break the claim for every tenant. | A sweep at the start of every run closes such rows as failed, and the claim never selects rows at 15 attempts. | `webhooks.e2e.test.ts`: crashed 15th attempt |
 
 ## Residual risks
 
 - Delivery is at least once. Receivers must de-duplicate on `Idempotency-Key`.
 - The signing key hierarchy is the development provider until KMS exists. The webhook key is derived like the others.
-- No delivery log is exposed to tenants and nothing is redelivered by hand yet. There is no overlap window for a rotated secret: the old one stops working at once.
+- There is no overlap window for a rotated secret: the old one stops working at once.
+- The delivery log shows the state, the attempts and the last error text of each delivery (our own short words such as `HTTP 500` or a connection error), never the payload or the signing secret. The error text comes from a tenant's own endpoint, so it can only tell the tenant about itself.
+- An administrator can send a failed delivery again, but never more than the receiver already sees on a normal retry: the same payload and the same `Idempotency-Key`. A receiver that does not de-duplicate would act twice, as it could on any retry.
 - A tenant's endpoint can still be slow or wrong; that only affects that tenant's own deliveries.
-- Rate limiting of registration is not built, and endpoints that keep failing are not disabled automatically (no circuit breaker yet). A tenant can disable an endpoint (`DELETE`) and rotate its secret (`rotate-secret`); both are audit events. An endpoint cannot be enabled again.
+- Registration is limited per address and per key by the general rate limits (threat model 0011) and to 10 active endpoints, but has no limit of its own. A tenant can disable an endpoint (`DELETE`) and rotate its secret (`rotate-secret`); both are audit events. An endpoint cannot be enabled again, including one that Saral switched off.
+- An endpoint is switched off only when a delivery fails for good and its ten most recent finished deliveries have all failed. Deliveries closed by the sweep (abandoned after 15 attempts by a crashed worker) do not trigger the check, so a tenant with few events and an endpoint that is down can take a long time to be switched off. The tenant sees `Failed` deliveries in the log meanwhile.
 - The claim query repeats its due conditions on the locked row, because PostgreSQL rechecks only those after waiting on a concurrent claim. I could not build a deterministic test for that race; a repeated multi-worker test guards the behaviour.
 
 Owner of residual risk: repository owner (`pranaav2k5`).

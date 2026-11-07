@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { Endpoint, WebhookEvent } from "@/lib/api";
+import type { DeliveryRecord, Endpoint, WebhookEvent } from "@/lib/api";
 import { when } from "@/lib/format";
 import { useSession } from "@/lib/session";
 import { useAction } from "@/lib/use-action";
@@ -26,6 +26,83 @@ interface Shown {
 
 const secondary = "!bg-sheet !text-action border border-action";
 
+const tries = (n: number) => `${String(n)} ${n === 1 ? "try" : "tries"}`;
+
+/** What happened to one delivery, in words. */
+function outcome(d: DeliveryRecord): string {
+  if (d.state === "delivered") return `Delivered ${when(d.deliveredAt ?? d.createdAt)}`;
+  if (d.state === "failed") return `Failed after ${tries(d.attempts)}`;
+  if (d.attempts === 0) return "Waiting to be sent";
+  return `Waiting to be tried again (${tries(d.attempts)} so far${d.nextAttemptAt ? `, next try ${when(d.nextAttemptAt)}` : ""})`;
+}
+
+/** The delivery log of one endpoint, with a way to send a failed delivery again while the endpoint is still enabled. */
+function Deliveries({ endpoint, onClose }: { endpoint: Endpoint; onClose: () => void }) {
+  const { api } = useSession();
+  const load = useCallback(() => api.listDeliveries(endpoint.id), [api, endpoint.id]);
+  const log = useLoad(load);
+  const again = useAction<boolean>(messageOf);
+  const canResend = !endpoint.disabledAt;
+
+  async function sendAgain(d: DeliveryRecord) {
+    await again.run(async () => {
+      await api.redeliver(endpoint.id, d.id);
+      log.refresh();
+      return true;
+    });
+  }
+
+  return (
+    <section aria-labelledby="deliveries-h" className="flex flex-col gap-3 rounded border border-rule bg-sheet p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="deliveries-h" ref={focusOnMount} tabIndex={-1} className="break-all text-xl font-semibold">Deliveries to {endpoint.url}</h2>
+        <Button type="button" className={secondary} onClick={onClose}>Close</Button>
+      </div>
+      {again.error && <Alert>{again.error}</Alert>}
+      {again.result && <p role="status" className="rounded border border-ok-fg bg-ok-bg px-3 py-2 text-ok-fg">It is queued again and will be sent shortly.</p>}
+      {log.status === "loading" && <p role="status">Loading deliveries…</p>}
+      {log.status === "error" && (
+        <div className="flex flex-col items-start gap-3">
+          <Alert>{log.error}</Alert>
+          <Button type="button" onClick={log.retry}>Try again</Button>
+        </div>
+      )}
+      {log.status === "ready" && log.data.length === 0 && <p>Nothing has been sent to this endpoint yet.</p>}
+      {log.status === "ready" && log.data.length > 0 && (
+        <table className="w-full border-collapse text-left">
+          <caption className="sr-only">Deliveries to {endpoint.url}, newest first</caption>
+          <thead>
+            <tr className="border-b border-rule text-sm text-ink-soft">
+              <th scope="col" className="py-2 pr-3">Event</th>
+              <th scope="col" className="py-2 pr-3">Created</th>
+              <th scope="col" className="py-2 pr-3">What happened</th>
+              <th scope="col" className="py-2 pr-3">Last answer</th>
+              <th scope="col" className="py-2"><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {log.data.map((d) => (
+              <tr key={d.id} className="border-b border-rule align-top">
+                <th scope="row" className="py-2 pr-3 font-normal">{eventLabel(d.eventType)}</th>
+                <td className="py-2 pr-3">{when(d.createdAt)}</td>
+                <td className="py-2 pr-3">{outcome(d)}</td>
+                <td className="py-2 pr-3 break-all">{d.lastError ?? ""}</td>
+                <td className="py-2">
+                  {d.state === "failed" && canResend && (
+                    <Button type="button" className={secondary} disabled={again.busy} onClick={() => void sendAgain(d)}>
+                      Send again<span className="sr-only"> ({eventLabel(d.eventType)}, {when(d.createdAt)})</span>
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 export function IntegrationsPage() {
   const { api } = useSession();
   const load = useCallback(() => api.listEndpoints(), [api]);
@@ -34,6 +111,7 @@ export function IntegrationsPage() {
   const [chosen, setChosen] = useState<readonly WebhookEvent[]>([]);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [shown, setShown] = useState<Shown | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
   const create = useAction<void>(messageOf);
   const row = useAction<void>(messageOf);
 
@@ -113,15 +191,24 @@ export function IntegrationsPage() {
                 <tr key={ep.id} className="border-b border-rule align-top">
                   <th scope="row" className="break-all py-2 pr-3 font-normal">{ep.url}</th>
                   <td className="py-2 pr-3">{ep.events.map(eventLabel).join(", ")}</td>
-                  <td className="py-2 pr-3">{ep.disabledAt ? `Disabled ${when(ep.disabledAt)}` : "Active"}</td>
+                  <td className="py-2 pr-3">
+                    {!ep.disabledAt ? "Active" : ep.disabledReason === "failures" ? `Switched off ${when(ep.disabledAt)} after repeated failures` : `Disabled ${when(ep.disabledAt)}`}
+                  </td>
                   <td className="py-2">
-                    {!ep.disabledAt && confirm?.id !== ep.id && (
+                    {confirm?.id !== ep.id && (
                       <div className="flex flex-wrap gap-2">
-                        <Button type="button" className={secondary} onClick={() => setConfirm({ id: ep.id, kind: "rotate" })}>
-                          Rotate secret<span className="sr-only"> for {ep.url}</span>
-                        </Button>
-                        <Button type="button" className={secondary} onClick={() => setConfirm({ id: ep.id, kind: "disable" })}>
-                          Disable<span className="sr-only"> {ep.url}</span>
+                        {!ep.disabledAt && (
+                          <>
+                            <Button type="button" className={secondary} onClick={() => setConfirm({ id: ep.id, kind: "rotate" })}>
+                              Rotate secret<span className="sr-only"> for {ep.url}</span>
+                            </Button>
+                            <Button type="button" className={secondary} onClick={() => setConfirm({ id: ep.id, kind: "disable" })}>
+                              Disable<span className="sr-only"> {ep.url}</span>
+                            </Button>
+                          </>
+                        )}
+                        <Button type="button" className={secondary} onClick={() => setViewing(ep.id)}>
+                          Deliveries<span className="sr-only"> for {ep.url}</span>
                         </Button>
                       </div>
                     )}
@@ -147,6 +234,10 @@ export function IntegrationsPage() {
           </table>
         )}
       </section>
+
+      {list.status === "ready" && viewing !== null && list.data.some((e) => e.id === viewing) && (
+        <Deliveries key={viewing} endpoint={list.data.find((e) => e.id === viewing) as Endpoint} onClose={() => setViewing(null)} />
+      )}
 
       <section aria-labelledby="add-h" className="flex flex-col gap-3 rounded border border-rule bg-sheet p-4">
         <h2 id="add-h" className="text-xl font-semibold">Add an endpoint</h2>
