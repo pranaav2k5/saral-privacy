@@ -30,6 +30,8 @@ export interface AuthContext {
 
 export interface HttpRequest {
   headers: Record<string, string | string[] | undefined>;
+  /** The caller's address as Express works it out (it reads `X-Forwarded-For` only when told to trust a proxy). */
+  ip?: string;
   auth?: AuthContext;
 }
 

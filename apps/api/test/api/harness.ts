@@ -4,6 +4,7 @@ import request from "supertest";
 import { AppModule } from "../../src/app.module.js";
 import { configureApp } from "../../src/bootstrap.js";
 import { issueApiKey } from "../../src/auth/api-keys.js";
+import { RATE_LIMITS, RATE_LIMIT_CLOCK, type Limits } from "../../src/ratelimit/policies.js";
 import { KEY_PROVIDER, type KeyProvider } from "../../src/keys/key-provider.js";
 import { SETTINGS, type Settings } from "../../src/settings.js";
 import { URL_RESOLVER, WEBHOOK_HTTP, type WebhookHttp, type WebhookRequest } from "../../src/webhooks/tokens.js";
@@ -99,7 +100,18 @@ export interface Api {
   stop: () => Promise<void>;
 }
 
-export async function startApi(): Promise<Api> {
+/** So many that no test is slowed by the limiter unless it asks for tight limits. */
+const UNLIMITED: Limits = { ip: { limit: 1e9, windowMs: 60_000 }, auth: { limit: 1e9, windowMs: 60_000 }, principal: { limit: 1e9, windowMs: 60_000 } };
+
+export interface StartOptions {
+  limits?: Partial<Limits>;
+  /** How many proxies sit in front of the app, as TRUST_PROXY would say. */
+  trustProxy?: number;
+  /** The limiter's clock, to move through a window without waiting. */
+  clock?: () => number;
+}
+
+export async function startApi(options: StartOptions = {}): Promise<Api> {
   const db = await createTestDb();
   const settings: Settings = { databaseUrl: db.url, nodeEnv: "test", devMasterSecret: MASTER, publicBaseUrl: PUBLIC_BASE_URL };
   const hooks = new FakeWebhookHttp();
@@ -107,9 +119,11 @@ export async function startApi(): Promise<Api> {
     .overrideProvider(SETTINGS).useValue(settings)
     .overrideProvider(WEBHOOK_HTTP).useValue(hooks)
     .overrideProvider(URL_RESOLVER).useValue(fakeResolver)
+    .overrideProvider(RATE_LIMITS).useValue({ ...UNLIMITED, ...options.limits })
+    .overrideProvider(RATE_LIMIT_CLOCK).useValue(options.clock ?? Date.now)
     .compile();
   const app = moduleRef.createNestApplication();
-  configureApp(app);
+  configureApp(app, options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy });
   // Listen once on an ephemeral port: supertest then reuses the server instead of adding a listener per request.
   await app.listen(0, "127.0.0.1");
   const keys = app.get<KeyProvider>(KEY_PROVIDER);

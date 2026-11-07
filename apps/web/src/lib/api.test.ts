@@ -87,6 +87,15 @@ describe("ApiClient", () => {
     expect(((await a2.me().catch((e: unknown) => e)) as ApiError).message).toBe("invalid credentials");
   });
 
+  test("being asked to slow down shows the server's words, with how long to wait, or plain words if it gave none", async () => {
+    const { api } = client(() => ({ status: 429, body: { error: "rate_limited", message: "Too many requests. Try again in 12 seconds." } }));
+    expect(((await api.me().catch((e: unknown) => e)) as ApiError).message).toBe("Too many requests. Try again in 12 seconds.");
+    const { api: bare } = client(() => ({ status: 429, body: {} }));
+    const err = (await bare.me().catch((e: unknown) => e)) as ApiError;
+    expect(err.status).toBe(429);
+    expect(err.message).toBe("Too many attempts. Wait a minute and try again.");
+  });
+
   test("a 204 (disabling an endpoint) is success with no body", async () => {
     const { api } = client(() => ({ status: 204, rawBody: "" }));
     await expect(api.disableEndpoint("e1")).resolves.toBeUndefined();

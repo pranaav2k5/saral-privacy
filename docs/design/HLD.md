@@ -132,7 +132,7 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 ## 8. Known gaps (also listed in the threat models)
 
 - Nothing proves a person controls the identifier they type, so a consent can be forged through a publishable key.
-- No rate limiting; no circuit breaker for failing webhook endpoints.
+- Rate limits are counted in each instance's memory, so with several instances a caller can get that many times the limit; no circuit breaker for failing webhook endpoints.
 - No nightly anchor job, no KMS provider, no deployment.
 - Hindi text is an unreviewed draft; the four further languages are not started.
 - Staff accounts are made and recovered by an operator tool that works only with the development key provider, staff cannot change their own password, and the dashboard has no content security policy for scripts (threat models 0008 and 0009).

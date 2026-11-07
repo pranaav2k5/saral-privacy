@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Post } from "@nestjs/common";
 import { Auth, Public, Scopes, type AuthContext } from "../auth/access.js";
 import { bad, objectBody } from "../http/validate.js";
+import { Throttle } from "../ratelimit/throttle.js";
 import { PASSWORD_MAX } from "./password.js";
 import { normalizeEmail } from "./staff-admin.js";
 import { StaffService } from "./staff.service.js";
@@ -20,6 +21,7 @@ export class AuthController {
   @Post("login")
   @HttpCode(200)
   @Public()
+  @Throttle("auth")
   login(@Body() raw: unknown) {
     const body = objectBody(raw);
     const tenant = text(body.tenant, "tenant", 63);
@@ -33,6 +35,7 @@ export class AuthController {
   @Post("mfa/enroll")
   @HttpCode(200)
   @Public()
+  @Throttle("auth")
   enroll(@Body() raw: unknown) {
     return this.staff.enroll(text(objectBody(raw).challenge, "challenge", 2000));
   }
@@ -41,6 +44,7 @@ export class AuthController {
   @Post("mfa/verify")
   @HttpCode(200)
   @Public()
+  @Throttle("auth")
   verify(@Body() raw: unknown) {
     const body = objectBody(raw);
     return this.staff.verifyMfa(text(body.challenge, "challenge", 2000), text(body.code, "code", 20));
