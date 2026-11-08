@@ -44,6 +44,23 @@ export interface Endpoint {
   events: WebhookEvent[];
   createdAt: string;
   disabledAt: string | null;
+  /** `failures` when Saral switched it off after repeated failures; anything else that is disabled was the administrator's doing. */
+  disabledReason?: "admin" | "failures" | null;
+}
+
+export type DeliveryState = "pending" | "delivered" | "failed";
+
+/** One line of an endpoint's delivery log. What was sent is not part of it. */
+export interface DeliveryRecord {
+  id: string;
+  eventType: WebhookEvent;
+  state: DeliveryState;
+  attempts: number;
+  createdAt: string;
+  nextAttemptAt: string | null;
+  deliveredAt: string | null;
+  lastStatus: number | null;
+  lastError: string | null;
 }
 
 export interface NoticeSummary {
@@ -159,4 +176,9 @@ export class ApiClient {
   createEndpoint = (url: string, events: WebhookEvent[]) => this.request<Endpoint & { secret: string }>("POST", "/v1/webhook-endpoints", { url, events });
   disableEndpoint = (id: string) => this.request<void>("DELETE", `/v1/webhook-endpoints/${encodeURIComponent(id)}`);
   rotateSecret = (id: string) => this.request<{ id: string; secret: string }>("POST", `/v1/webhook-endpoints/${encodeURIComponent(id)}/rotate-secret`);
+  /** The most recent deliveries of an endpoint, newest first. */
+  listDeliveries = (endpointId: string) => this.request<DeliveryRecord[]>("GET", `/v1/webhook-endpoints/${encodeURIComponent(endpointId)}/deliveries`);
+  /** Puts a failed delivery back in the queue. */
+  redeliver = (endpointId: string, deliveryId: string) =>
+    this.request<{ id: string; state: "pending" }>("POST", `/v1/webhook-endpoints/${encodeURIComponent(endpointId)}/deliveries/${encodeURIComponent(deliveryId)}/redeliver`);
 }

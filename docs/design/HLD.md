@@ -123,7 +123,7 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 | Database down or a connection dropped | Authenticated routes answer 5xx; `/healthz` stays up (it never touches dependencies); the pool logs dropped idle connections and reconnects (it does not crash the process); nothing is partially written because each request is one transaction. |
 | Key provider missing (production today) | Anything needing a key (API keys, receipts, the JWKS) answers 503. `/healthz` keeps working; the public notice route needs only the database. |
 | Receipt signing fails or the tenant profile is incomplete | The whole grant rolls back (422 for an incomplete profile); no consent without a receipt. |
-| Webhook endpoint down or slow | Retries with backoff; other endpoints and tenants are unaffected; a delivery that exhausts 15 attempts is marked `failed`. |
+| Webhook endpoint down or slow | Retries with backoff; other endpoints and tenants are unaffected; a delivery that exhausts 15 attempts is marked `failed`, an administrator can read the delivery log and send a failed one again, and an endpoint whose last ten finished deliveries all failed is disabled. |
 | Worker crashes mid-delivery | The claim expires after 5 minutes and the row is sent again (at least once). A row left at 15 attempts is closed as failed by a sweep, so it cannot block the claim for other tenants. |
 | Two requests append to one tenant's chain | A per-tenant advisory lock serialises them; a database trigger refuses a fork or a gap. |
 | Someone edits the audit table | Update, delete and truncate are refused for everyone, including the owner. An owner who disables the triggers is caught by `verify` and by the anchor. |

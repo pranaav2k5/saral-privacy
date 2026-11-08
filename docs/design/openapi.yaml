@@ -355,7 +355,9 @@ paths:
       summary: Disable a webhook endpoint
       description: >-
         Nothing more is sent to it and its place in the cap of 10 is free again. Events still waiting for it are
-        marked failed. Disabling is an audit event. An endpoint cannot be enabled again; register a new one.
+        marked failed. Disabling is an audit event. An endpoint cannot be enabled again; register a new one. Saral also
+        disables an endpoint whose last ten finished deliveries have all failed for good (none delivered among them): the
+        endpoint then reads `disabledReason: failures`, and the event `webhook.endpoint_auto_disabled` is in the audit log.
       x-scopes: [tenant_admin]
       security: [{ apiKey: [] }]
       parameters:
@@ -394,6 +396,76 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/webhook-endpoints/{id}/deliveries:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: The delivery log of an endpoint
+      description: >-
+        The most recent deliveries of one endpoint, newest first, with their state and what happened on the last try. It
+        works for a disabled endpoint too. The payload that was sent is not included.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - name: state
+          in: query
+          schema: { enum: [pending, delivered, failed] }
+        - name: limit
+          in: query
+          description: How many to show, from 1 to 100. The default is 50.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: The deliveries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WebhookDeliveryRecord" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/webhook-endpoints/{id}/deliveries/{deliveryId}/redeliver:
+    post:
+      tags: [Webhooks]
+      operationId: redeliverWebhook
+      summary: Send a failed delivery again
+      description: >-
+        Puts a failed delivery back in the queue with its attempts unused. The worker then sends it with the same
+        `Idempotency-Key` (the delivery id), so a receiver that already acted on it can tell. Only a delivery that has
+        failed (`409 not_failed` otherwise) and only to an endpoint that is still enabled (`409 endpoint_disabled`). It is
+        an audit event (`webhook.delivery_redelivered`). The database lets the application role do exactly this to a
+        delivery and nothing else.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - name: deliveryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Queued again.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, state]
+                properties:
+                  id: { type: string, format: uuid }
+                  state: { enum: [pending] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`not_failed` (the delivery has not failed) or `endpoint_disabled`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/dsr:
     post:
       tags: [Rights requests]
@@ -897,7 +969,7 @@ components:
       enum: [consent.granted, consent.withdrawn, dsr.submitted, dsr.transitioned]
     WebhookEndpoint:
       type: object
-      required: [id, url, events, createdAt, disabledAt]
+      required: [id, url, events, createdAt, disabledAt, disabledReason]
       properties:
         id: { type: string, format: uuid }
         url: { type: string }
@@ -906,6 +978,22 @@ components:
           items: { $ref: "#/components/schemas/WebhookEvent" }
         createdAt: { type: string, format: date-time }
         disabledAt: { type: [string, "null"], format: date-time }
+        disabledReason:
+          description: Null while the endpoint is active. `failures` when Saral disabled it; `admin` otherwise, including endpoints disabled before reasons were kept.
+          enum: [admin, failures, null]
+    WebhookDeliveryRecord:
+      type: object
+      required: [id, eventType, state, attempts, createdAt, nextAttemptAt, deliveredAt, lastStatus, lastError]
+      properties:
+        id: { type: string, format: uuid, description: Also the `Idempotency-Key` the receiver sees. }
+        eventType: { $ref: "#/components/schemas/WebhookEvent" }
+        state: { enum: [pending, delivered, failed] }
+        attempts: { type: integer, minimum: 0, maximum: 15 }
+        createdAt: { type: string, format: date-time }
+        nextAttemptAt: { type: [string, "null"], format: date-time, description: Only while pending. }
+        deliveredAt: { type: [string, "null"], format: date-time }
+        lastStatus: { type: [integer, "null"], description: The HTTP status of the last try, when there was an answer. }
+        lastError: { type: [string, "null"], description: Short words about why the last try failed. }
     WebhookEndpointWithSecret:
       allOf:
         - { $ref: "#/components/schemas/WebhookEndpoint" }

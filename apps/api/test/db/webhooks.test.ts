@@ -54,7 +54,7 @@ describe("webhook tables for the application role", () => {
     ).rejects.toThrow(/row-level security/);
   });
 
-  test("the application role can queue deliveries but not change or remove them", async () => {
+  test("the application role can queue deliveries but not remove them, and may change one only to send a failed one again", async () => {
     await asApp(db, TENANT_A, async (c) => {
       const r = await c.query(
         "INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_type, payload) VALUES ($1, $2, $3, 'consent.withdrawn', '{}')",
@@ -89,6 +89,96 @@ describe("webhook tables for the application role", () => {
   test("state and attempts are constrained", async () => {
     await expect(db.owner.query("UPDATE webhook_deliveries SET state = 'weird' WHERE id = $1", [uid("a", 71)])).rejects.toThrow(/check constraint/);
     await expect(db.owner.query("UPDATE webhook_deliveries SET attempts = 16 WHERE id = $1", [uid("a", 71)])).rejects.toThrow(/check constraint/);
+  });
+});
+
+describe("sending a failed delivery again, as the application role", () => {
+  const FAILED = uid("a", 72);
+  const DELIVERED = uid("a", 73);
+  const PENDING = uid("a", 74);
+  const OTHER_TENANT_FAILED = uid("b", 72);
+
+  beforeAll(async () => {
+    const add = (id: string, tenant: string, endpoint: string, state: string, attempts: number) =>
+      db.owner.query(
+        `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_type, payload, state, attempts, last_status, last_error)
+         VALUES ($1, $2, $3, 'consent.granted', '{"x":1}', $4, $5, 500, 'HTTP 500')`,
+        [id, tenant, endpoint, state, attempts],
+      );
+    await add(FAILED, TENANT_A, uid("a", 70), "failed", 15);
+    await add(DELIVERED, TENANT_A, uid("a", 70), "delivered", 1);
+    await add(PENDING, TENANT_A, uid("a", 70), "pending", 3);
+    await add(OTHER_TENANT_FAILED, TENANT_B, uid("b", 70), "failed", 15);
+  });
+
+  // The other tests in this file count every delivery, so these are removed again.
+  afterAll(async () => {
+    await db.owner.query("DELETE FROM webhook_deliveries WHERE id = ANY($1)", [[FAILED, DELIVERED, PENDING, OTHER_TENANT_FAILED]]);
+  });
+
+  const again = (id: string) => ["UPDATE webhook_deliveries SET state = 'pending', attempts = 0, next_attempt_at = now() WHERE id = $1", [id]] as [string, string[]];
+  const row = async (id: string) => (await db.owner.query("SELECT state, attempts, last_status, last_error, payload FROM webhook_deliveries WHERE id = $1", [id])).rows[0];
+
+  test("a failed delivery goes back to pending with no attempts used, and what happened before stays on record", async () => {
+    // asApp rolls back, so the row is read inside the same transaction.
+    const seen = await asApp(db, TENANT_A, async (c) => {
+      const r = await c.query(...again(FAILED));
+      const after = (await c.query("SELECT state, attempts, last_status, last_error, payload FROM webhook_deliveries WHERE id = $1", [FAILED])).rows[0];
+      return { updated: r.rowCount, after };
+    });
+    expect(seen).toEqual({ updated: 1, after: { state: "pending", attempts: 0, last_status: 500, last_error: "HTTP 500", payload: { x: 1 } } });
+  });
+
+  test.each([
+    ["a delivered one", () => DELIVERED],
+    ["a pending one", () => PENDING],
+  ])("%s cannot be sent again", async (_n, id) => {
+    await expect(asApp(db, TENANT_A, (c) => c.query(...again(id())))).rejects.toThrow(/permission denied/);
+  });
+
+  test.each([
+    ["marking it delivered", "state = 'delivered', attempts = 0, next_attempt_at = now()"],
+    ["leaving attempts used up", "state = 'pending', attempts = 5, next_attempt_at = now()"],
+    ["scheduling it for tomorrow", "state = 'pending', attempts = 0, next_attempt_at = now() + interval '1 day'"],
+    ["keeping it failed with fewer attempts", "state = 'failed', attempts = 0, next_attempt_at = now()"],
+  ])("a failed one cannot be changed by %s", async (_n, set) => {
+    await expect(asApp(db, TENANT_A, (c) => c.query(`UPDATE webhook_deliveries SET ${set} WHERE id = $1`, [FAILED]))).rejects.toThrow(/permission denied/);
+    expect((await row(FAILED)).state).toBe("failed");
+  });
+
+  test.each(["payload = '{}'", "endpoint_id = endpoint_id", "tenant_id = tenant_id", "last_status = 200", "last_error = NULL", "delivered_at = now()", "created_at = now()", "id = id"])(
+    "and %s is not the application role's to change",
+    async (set) => {
+      await expect(asApp(db, TENANT_A, (c) => c.query(`UPDATE webhook_deliveries SET ${set} WHERE id = $1`, [FAILED]))).rejects.toThrow(/permission denied/);
+    },
+  );
+
+  test("another tenant's failed delivery is out of reach", async () => {
+    const r = await asApp(db, TENANT_A, (c) => c.query(...again(OTHER_TENANT_FAILED)));
+    expect(r.rowCount).toBe(0);
+    expect((await row(OTHER_TENANT_FAILED)).state).toBe("failed");
+  });
+
+  test("the delivery worker is not held to that rule: it records outcomes as before", async () => {
+    await asWorker(async (c) => {
+      const r = await c.query("UPDATE webhook_deliveries SET state = 'delivered', delivered_at = now(), last_status = 200 WHERE id = $1", [PENDING]);
+      expect(r.rowCount).toBe(1);
+    });
+  });
+});
+
+describe("why an endpoint was disabled", () => {
+  test("is a column the application role may write alongside the time, and only with a known reason", async () => {
+    await asApp(db, TENANT_A, async (c) => {
+      await c.query("UPDATE webhook_endpoints SET disabled_at = now(), disabled_reason = 'failures' WHERE id = $1", [uid("a", 70)]);
+      expect((await c.query("SELECT disabled_reason FROM webhook_endpoints WHERE id = $1", [uid("a", 70)])).rows[0]).toEqual({ disabled_reason: "failures" });
+    });
+    await expect(asApp(db, TENANT_A, (c) => c.query("UPDATE webhook_endpoints SET disabled_reason = 'because' WHERE id = $1", [uid("a", 70)]))).rejects.toThrow(/check constraint/);
+    await db.owner.query("UPDATE webhook_endpoints SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1", [uid("a", 70)]);
+  });
+
+  test("is empty for an endpoint that is not disabled, and endpoints disabled before it existed read as the administrator's doing", async () => {
+    expect((await db.owner.query("SELECT disabled_reason FROM webhook_endpoints WHERE id = $1", [uid("b", 70)])).rows[0]).toEqual({ disabled_reason: null });
   });
 });
 

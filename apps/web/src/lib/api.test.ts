@@ -103,6 +103,17 @@ describe("ApiClient", () => {
     expect(calls[0]?.url).toBe("https://api.example.org/v1/auth/password");
   });
 
+  test("the delivery log of an endpoint is read from its own address, and a failed delivery is sent again with a POST and no body", async () => {
+    const { api, calls } = client(() => ({ body: [] }));
+    await api.listDeliveries("e 1");
+    expect(calls[0]?.url).toBe("https://api.example.org/v1/webhook-endpoints/e%201/deliveries");
+    expect(calls[0]?.init.method).toBe("GET");
+    await api.redeliver("e 1", "d/2");
+    expect(calls[1]?.url).toBe("https://api.example.org/v1/webhook-endpoints/e%201/deliveries/d%2F2/redeliver");
+    expect(calls[1]?.init.method).toBe("POST");
+    expect(calls[1]?.init.body).toBeUndefined();
+  });
+
   test("a 204 (disabling an endpoint) is success with no body", async () => {
     const { api } = client(() => ({ status: 204, rawBody: "" }));
     await expect(api.disableEndpoint("e1")).resolves.toBeUndefined();
