@@ -14,7 +14,7 @@ const spec = parse(readFileSync(SPEC_PATH, "utf8")) as {
   paths: Record<string, Record<string, { operationId?: string; "x-access"?: string; "x-scopes"?: string[]; security?: unknown[] }>>;
 };
 
-const METHODS: Record<number, string> = { [RequestMethod.GET]: "get", [RequestMethod.POST]: "post", [RequestMethod.DELETE]: "delete" };
+const METHODS: Record<number, string> = { [RequestMethod.GET]: "get", [RequestMethod.POST]: "post", [RequestMethod.DELETE]: "delete", [RequestMethod.PATCH]: "patch" };
 const join = (...parts: string[]): string => "/" + parts.flatMap((p) => p.split("/")).filter(Boolean).join("/");
 
 interface Route {

@@ -466,7 +466,7 @@ This section records what exists in the repository against the scope in section 
 | P1 item | Status |
 |---|---|
 | 8. RoPA wizard | Not started |
-| 9. Breach workflow | Not started |
+| 9. Breach workflow | Built (`apps/api/src/breaches`, migration 0012, the Breaches page in `apps/web`; LLD section 6.7, threat model 0013). Incident form, drafts for the Board and for the affected people, the officer's sign-off, a record of when the Board and the people were told, a closing note, every step audited. Not confirmed: the 72-hour period and what has to be sent (the Rule's text has not been read here), and the drafts have not been reviewed by a lawyer. Not built: reminders and alerts before the deadline, an overview alert, PDF export. Saral sends nothing to the Board; the officer does, and records it. |
 | 10. DPO dashboard | Built for the core screens (`apps/web`: sign-in with MFA, overview, rights-request queue with deadlines and decisions, audit verification, notice publishing, webhook integrations, account and password change; LLD section 11, threat models 0009 and 0010). Not built: consent search, consent funnel, a script content security policy. |
 | 11. Four more languages | Not started |
 | 12. External VAPT | Not started. Book the slot in week 6 as planned. |
