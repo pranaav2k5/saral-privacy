@@ -272,6 +272,70 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/consents/search:
+    post:
+      tags: [Consent review]
+      operationId: searchConsents
+      summary: Find a person's consents by identifier
+      description: >-
+        For the data protection officer (scope `dpo`), who needs to answer a person who writes in. The identifier (a phone number
+        in E.164 form or an email address) is in the body, not in the address, is turned into the person's pseudonym, and is never
+        stored, logged or answered back. The consents come newest first, at most 100 (`truncated` says there were more). Someone
+        with no consent has none: they are not created by being searched for. A search that finds a person is an audit event
+        (`consent.searched`) naming who looked and the person's internal id, never the identifier.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              additionalProperties: false
+              properties:
+                identifier: { $ref: "#/components/schemas/Identifier" }
+      responses:
+        "200":
+          description: The person's consents.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [consents, truncated]
+                properties:
+                  consents:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConsentView" }
+                  truncated: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/consents/summary:
+    get:
+      tags: [Consent review]
+      operationId: getConsentSummary
+      summary: The organisation's consents in numbers
+      description: >-
+        Counts only, for the data protection officer (scope `dpo`). `totals` and `purposes` cover every consent ever recorded
+        (a purpose counts the consents that agreed to it). `days` covers the last `days` UTC days up to and including today,
+        oldest first, one line for every day, with the consents given and withdrawn that day.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: days
+          in: query
+          description: How many days, from 1 to 366. The default is 30.
+          schema: { type: integer, minimum: 1, maximum: 366, default: 30 }
+      responses:
+        "200":
+          description: The numbers.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsentSummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/consents/{id}/receipt:
     get:
       tags: [Consents]
@@ -1420,6 +1484,63 @@ components:
         principalsCount: { type: [integer, "null"] }
         closedAt: { type: [string, "null"], format: date-time }
         closingNote: { type: [string, "null"] }
+    ConsentView:
+      type: object
+      required: [id, status, grantedAt, withdrawnAt, collectionMethod, notice, purposes, receiptId]
+      properties:
+        id: { type: string, format: uuid }
+        status: { enum: [granted, withdrawn, expired] }
+        grantedAt: { type: string, format: date-time }
+        withdrawnAt: { type: [string, "null"], format: date-time }
+        collectionMethod: { enum: [web_sdk, api, dpo_entry] }
+        notice:
+          type: object
+          required: [id, version, language]
+          properties:
+            id: { type: string, format: uuid }
+            version: { type: integer }
+            language: { type: string }
+        purposes:
+          type: array
+          items:
+            type: object
+            required: [key, granted]
+            properties:
+              key: { type: string }
+              granted: { type: boolean }
+        receiptId: { type: [string, "null"], format: uuid }
+    ConsentSummary:
+      type: object
+      required: [from, to, totals, purposes, days]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        totals: { $ref: "#/components/schemas/ConsentCounts" }
+        purposes:
+          type: array
+          items:
+            allOf:
+              - { $ref: "#/components/schemas/ConsentCounts" }
+              - type: object
+                required: [key]
+                properties:
+                  key: { type: string }
+        days:
+          type: array
+          items:
+            type: object
+            required: [date, granted, withdrawn]
+            properties:
+              date: { type: string, format: date }
+              granted: { type: integer }
+              withdrawn: { type: integer }
+    ConsentCounts:
+      type: object
+      required: [active, withdrawn, expired]
+      properties:
+        active: { type: integer }
+        withdrawn: { type: integer }
+        expired: { type: integer }
     StaffSession:
       type: object
       required: [token, expiresAt, role, mustChangePassword]

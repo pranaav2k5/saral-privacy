@@ -37,7 +37,7 @@ Browser to API (only with `Authorization: Bearer`, never cookies, `credentials: 
 - **The token is readable by page scripts** (it is in `sessionStorage`). The alternative, an HttpOnly cookie, brings back cross-site request forgery and needs a backend-for-frontend. Not chosen for the first version.
 - **Sign-in is rate limited per address, in each API instance** (threat model 0011).
 - **Staff accounts and recovery are done by an operator tool, not from the dashboard**, but staff change their own password in the dashboard (threat model 0008).
-- **Screens for consent search and a consent funnel are not built.** Notices are published from the Notices page (threat model 0010).
+- **There is no funnel from banner views to consents**, because views are not recorded. Notices are published from the Notices page (threat model 0010), and consents are found on the Consents page (threat model 0012).
 - **Sign-out is client-only.** There is no logout endpoint, so a copied token stays valid until it expires (at most 15 minutes).
 - **A first-time authenticator set-up that is started again** replaces the unconfirmed secret on the server, so an authenticator entry scanned earlier stops working. The screen does not warn about this yet.
 - **Recovery codes left on screen past the token's 15 minutes**, or a computer clock more than 15 minutes ahead of the server, make "I have saved these codes" sign the person straight back out without a message.

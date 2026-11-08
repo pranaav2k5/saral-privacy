@@ -119,6 +119,32 @@ export interface BreachDrafts {
   principalSha256: string;
 }
 
+/** One consent of one person, as the data protection officer sees it. */
+export interface ConsentView {
+  id: string;
+  status: "granted" | "withdrawn" | "expired";
+  grantedAt: string;
+  withdrawnAt: string | null;
+  collectionMethod: "web_sdk" | "api" | "dpo_entry";
+  notice: { id: string; version: number; language: string };
+  purposes: { key: string; granted: boolean }[];
+  receiptId: string | null;
+}
+
+export interface ConsentCounts {
+  active: number;
+  withdrawn: number;
+  expired: number;
+}
+
+export interface ConsentSummary {
+  from: string;
+  to: string;
+  totals: ConsentCounts;
+  purposes: ({ key: string } & ConsentCounts)[];
+  days: { date: string; granted: number; withdrawn: number }[];
+}
+
 export interface NoticeSummary {
   id: string;
   version: number;
@@ -240,6 +266,9 @@ export class ApiClient {
   recordBoardNotified = (id: string, body: { notifiedAt: string; reference: string }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/board-notified`, body);
   recordPrincipalsNotified = (id: string, body: { how: string; count: number }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/principals-notified`, body);
   closeBreach = (id: string, note: string) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/close`, { note });
+  /** A person's consents. The identifier goes in the body of a POST, never in an address. */
+  searchConsents = (identifier: string) => this.request<{ consents: ConsentView[]; truncated: boolean }>("POST", "/v1/consents/search", { identifier });
+  consentSummary = (days: number) => this.request<ConsentSummary>("GET", `/v1/consents/summary?days=${String(days)}`);
   /** The most recent deliveries of an endpoint, newest first. */
   listDeliveries = (endpointId: string) => this.request<DeliveryRecord[]>("GET", `/v1/webhook-endpoints/${encodeURIComponent(endpointId)}/deliveries`);
   /** Puts a failed delivery back in the queue. */
