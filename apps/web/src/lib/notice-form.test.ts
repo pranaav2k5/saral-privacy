@@ -179,6 +179,8 @@ describe("problemsFromError", () => {
   test("a list with nothing usable in it falls back to the single field and message, then to the message", () => {
     expect(problemsFromError(new ApiError(400, "m", { errors: [{}], field: "language", message: "must be one of: en, hi" }))).toEqual(["Language must be one of: en, hi."]);
     expect(problemsFromError(new ApiError(400, "Check what you entered and try again.", { errors: [{}] }))).toEqual(["Check what you entered and try again."]);
+    expect(problemsFromError(new ApiError(400, "m", { errors: [null, "text", 7, { field: "language", message: "must be one of: en, hi" }] }))).toEqual(["Language must be one of: en, hi."]);
+    expect(problemsFromError(new ApiError(400, "Check what you entered and try again.", { errors: [null] }))).toEqual(["Check what you entered and try again."]);
   });
 
   test("falls back to the single field and message", () => {
