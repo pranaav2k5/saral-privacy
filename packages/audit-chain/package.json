@@ -9,12 +9,16 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "verify-audit": "node dist/verify-main.js"
   },
   "dependencies": {
     "@saral/schemas": "workspace:*"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "bin": {
+    "saral-audit-verify": "dist/verify-main.js"
+  }
 }

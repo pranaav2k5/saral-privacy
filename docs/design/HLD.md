@@ -40,7 +40,7 @@ flowchart LR
   api -.-> kms
   worker --> pg
   worker -->|signed, https only| endpoint
-  api -.->|nightly job, not built| s3
+  api -.->|nightly job: a folder today, S3 not built| s3
 ```
 
 ## 3. Components
@@ -57,7 +57,8 @@ flowchart LR
 | Database | `apps/api/db/migrations` | yes | Tenancy boundary, immutability rules, outbox. |
 | Webhook worker | `apps/api/src/webhooks` | yes | Delivery with retries; runs in the API process when `SARAL_WEBHOOK_WORKER=on`. |
 | Infrastructure | `infra/terraform` | partly | Audit anchor bucket (Object Lock) and environment stacks. KMS, RDS, ECS not built. |
-| Nightly anchor job | not built | no | Reads a day's chain, builds the anchor, writes it to S3 with Object Lock. |
+| Nightly anchor job | `apps/api/src/audit` | partly | Reads a finished day's chain for every organisation, verifies it, builds the anchor, writes it once to a folder (`pnpm --filter @saral/api anchor`). The S3 Object Lock write and the schedule are not built. |
+| Audit verifier | `packages/audit-chain` | yes | `saral-audit-verify` checks a day's entries against its anchor on files only; no key needed for the anchored-entries check. |
 | KMS key provider | not built | no | The development provider derives keys from one secret and refuses production. |
 | Rights requests (DSR) | `apps/api/src/dsr` | yes | State machine, SLA due dates, DPO queue, sealed contacts, erasure. See LLD section 9. |
 | Staff login with MFA | `apps/api/src/staff` | yes | Password, authenticator code, recovery codes, session tokens. See LLD section 10 and ADR 0004. |
@@ -132,7 +133,7 @@ AWS ap-south-1 (Mumbai) primary. ECS Fargate for the API and a worker service fr
 ## 8. Known gaps (also listed in the threat models)
 
 - Nothing proves a person controls the identifier they type, so a consent can be forged through a publishable key.
-- Rate limits are counted in each instance's memory, so with several instances a caller can get that many times the limit; no circuit breaker for failing webhook endpoints.
-- No nightly anchor job, no KMS provider, no deployment.
+- Rate limits are counted in each instance's memory, so with several instances a caller can get that many times the limit; a webhook endpoint that keeps failing is switched off, but only per its own deliveries.
+- The nightly anchor job writes to a folder, not yet to S3 with Object Lock; no KMS provider, no deployment.
 - Hindi text is an unreviewed draft; the four further languages are not started.
 - Staff accounts are made and recovered by an operator tool that works only with the development key provider, an operator knows a new account's initial password until the person changes it (the session of such an account can do nothing else until then), and the dashboard has no content security policy for scripts (threat models 0008 and 0009).

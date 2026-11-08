@@ -839,6 +839,35 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/TooLarge" }
+  /v1/audit/entries:
+    get:
+      tags: [Audit]
+      operationId: getAuditEntries
+      summary: One UTC day of audit entries
+      description: >-
+        The day's entries in order, as stored: hashes, ids, times, the actor and the action, and no personal data. With that day's
+        anchor (the file the nightly job writes, or `/v1/audit/merkle-root`) an outside auditor can check them with the standalone
+        `saral-audit-verify` command: without any key it proves they are exactly the anchored entries; with the audit key, also that
+        each says what its hash was made from. A day with no entries is an empty list. A day over 100,000 entries is refused (422).
+      x-scopes: [auditor]
+      security: [{ apiKey: [] }]
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+      responses:
+        "200":
+          description: The entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/TooLarge" }
   /v1/audit/merkle-root:
     get:
       tags: [Audit]
@@ -1037,6 +1066,23 @@ components:
         - type: object
           properties:
             details: { type: [string, "null"] }
+    AuditEntry:
+      type: object
+      required: [tenantId, seqNo, ts, actorType, actorId, action, refTable, refId, payloadSha256, prevHash, entryHash, canonicalSchemaVersion, hmacSchemaVersion]
+      properties:
+        tenantId: { type: string, format: uuid }
+        seqNo: { type: string, description: A whole number as text, from 1 with no gaps. }
+        ts: { type: string, format: date-time }
+        actorType: { type: string }
+        actorId: { type: [string, "null"] }
+        action: { type: string }
+        refTable: { type: string }
+        refId: { type: string }
+        payloadSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        prevHash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        entryHash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        canonicalSchemaVersion: { type: integer }
+        hmacSchemaVersion: { type: integer }
     StaffSession:
       type: object
       required: [token, expiresAt, role, mustChangePassword]

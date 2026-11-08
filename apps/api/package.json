@@ -16,7 +16,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "db:migrate": "node dist/db/migrate-cli.js",
-    "operator": "node dist/operator/main.js"
+    "operator": "node dist/operator/main.js",
+    "anchor": "node dist/audit/anchor-main.js"
   },
   "dependencies": {
     "@nestjs/common": "^12.3.3",

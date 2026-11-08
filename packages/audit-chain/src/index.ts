@@ -10,4 +10,4 @@ export {
   type SealOptions,
   type VerifyOptions,
 } from "./chain";
-export { anchorBody, buildAnchor, verifyAgainstAnchor, type Anchor, type AnchorResult } from "./anchor";
+export { anchorBody, buildAnchor, verifyAgainstAnchor, verifyLinksAgainstAnchor, type Anchor, type AnchorResult } from "./anchor";
