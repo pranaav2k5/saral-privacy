@@ -774,6 +774,91 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/ropa:
+    post:
+      tags: [Records of processing]
+      operationId: saveRopaVersion
+      summary: Save the next version of the record of processing
+      description: >-
+        For the officer or the administrator. The record is stored as its canonical JSON text with the SHA-256 of that text, as the next version
+        (1, 2, 3, ...), and a version is never changed or deleted. A save that would change nothing (the same record as the latest version) is
+        refused with 409 `unchanged`, so the history is a list of changes, and an organisation can keep at most 200 versions (409 `version_limit`).
+        A save may say which version it started from (`basedOn`, 0 when nothing had been saved); if another version has been saved since, it is
+        refused with 409 `stale` and the number of the newest version, so nobody overwrites a change they have not seen.
+        The record can be at most 90 KiB. It is an audit event (`ropa.version_created`) that holds the hash and never the words.
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RopaSave" }
+      responses:
+        "201":
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RopaVersion" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`unchanged`, `version_limit`, or `stale` (with `latest`, the number of the newest version)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      tags: [Records of processing]
+      operationId: listRopaVersions
+      summary: The versions of the record, newest first
+      description: At most 100, without the records themselves.
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: The versions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RopaVersion" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/ropa/latest:
+    get:
+      tags: [Records of processing]
+      operationId: getLatestRopa
+      summary: The newest version, with its record
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: The newest version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RopaVersionWithRecord" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/ropa/{id}:
+    get:
+      tags: [Records of processing]
+      operationId: getRopaVersion
+      summary: One version, with its record
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The version.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RopaVersionWithRecord" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/dsr:
     post:
       tags: [Rights requests]
@@ -1541,6 +1626,97 @@ components:
         active: { type: integer }
         withdrawn: { type: integer }
         expired: { type: integer }
+    RopaSave:
+      type: object
+      additionalProperties: false
+      required: [document]
+      properties:
+        document: { $ref: "#/components/schemas/RopaDocument" }
+        note: { type: string, minLength: 1, maxLength: 500, description: Why this version was saved. It is not part of the record, so it does not make a save a change. }
+        basedOn: { type: integer, minimum: 0, maximum: 200, description: The version the change started from, or 0 when nothing had been saved. A save is refused (409 `stale`) when another version has been saved since. }
+    RopaVersion:
+      type: object
+      required: [id, version, createdAt, createdBy, note, sha256]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string }
+        note: { type: [string, "null"] }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: SHA-256 of the stored text of the record. }
+    RopaVersionWithRecord:
+      allOf:
+        - { $ref: "#/components/schemas/RopaVersion" }
+        - type: object
+          required: [document]
+          properties:
+            document: { $ref: "#/components/schemas/RopaDocument" }
+    RopaDocument:
+      type: object
+      description: The record of processing. About thirty questions in all (ten about the organisation and its review, fifteen for each activity).
+      additionalProperties: false
+      required: [schema, organisation, review, activities]
+      properties:
+        schema: { enum: ["saral.ropa/1"] }
+        organisation:
+          type: object
+          additionalProperties: false
+          required: [name, address, contactName, contactEmail, sector, significantDataFiduciary]
+          properties:
+            name: { type: string, minLength: 1, maxLength: 200 }
+            address: { type: string, minLength: 1, maxLength: 500 }
+            contactName: { type: string, minLength: 1, maxLength: 120 }
+            contactEmail: { type: string, maxLength: 254 }
+            website: { type: string, maxLength: 300, description: An https address without a user name or password. }
+            sector: { type: string, minLength: 1, maxLength: 120 }
+            significantDataFiduciary: { enum: [yes, no, unsure] }
+        review:
+          type: object
+          additionalProperties: false
+          required: [lastReviewedOn]
+          properties:
+            lastReviewedOn: { type: string, format: date, description: Not in the future. }
+            nextReviewDue: { type: string, format: date, description: Not before `lastReviewedOn`. }
+        activities:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items: { $ref: "#/components/schemas/RopaActivity" }
+        notes: { type: string, minLength: 1, maxLength: 2000 }
+    RopaActivity:
+      type: object
+      additionalProperties: false
+      required: [name, description, purposes, legalBasis, principals, personalData, involvesChildren, source, recipients, crossBorder, transferCountries, retention, securityMeasures, storage, owner]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120, description: Unique among the activities, ignoring case. }
+        description: { type: string, minLength: 1, maxLength: 1000 }
+        purposes: { type: array, minItems: 1, maxItems: 10, items: { type: string, minLength: 1, maxLength: 200 } }
+        legalBasis: { enum: [consent, legitimate_use, unsure] }
+        principals: { type: array, minItems: 1, maxItems: 10, items: { type: string, minLength: 1, maxLength: 100 } }
+        personalData: { type: array, minItems: 1, maxItems: 30, items: { type: string, minLength: 1, maxLength: 100 } }
+        involvesChildren: { type: boolean }
+        source: { enum: [directly_from_person, from_third_party, generated_by_us, mixed] }
+        recipients:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, role, country]
+            properties:
+              name: { type: string, minLength: 1, maxLength: 120 }
+              role: { enum: [processor, third_party] }
+              country: { type: string, pattern: '^[A-Z]{2}$' }
+        crossBorder: { type: boolean }
+        transferCountries: { type: array, items: { type: string, pattern: '^[A-Z]{2}$' }, description: Required, without repeats, when `crossBorder` is true; empty when it is false. }
+        retention: { type: string, minLength: 1, maxLength: 300 }
+        securityMeasures:
+          type: array
+          items: { enum: [encryption_at_rest, encryption_in_transit, access_control, multi_factor, logging, backups, pseudonymisation, physical_security] }
+          description: At least one, unless `otherMeasures` says what is done.
+        otherMeasures: { type: string, minLength: 1, maxLength: 300 }
+        storage: { type: string, minLength: 1, maxLength: 200 }
+        owner: { type: string, minLength: 1, maxLength: 120 }
     StaffSession:
       type: object
       required: [token, expiresAt, role, mustChangePassword]
