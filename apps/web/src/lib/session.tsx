@@ -19,7 +19,7 @@ const realClock = () => Date.now();
 type Snap =
   | { status: "loading" }
   | { status: "signedOut"; notice?: string }
-  | { status: "signedIn"; role: Role; token: string; expiresAt: string };
+  | { status: "signedIn"; role: Role; token: string; expiresAt: string; mustChangePassword: boolean };
 
 const LOADING: Snap = { status: "loading" };
 
@@ -27,10 +27,10 @@ function parse(raw: string | null, now: number, notice: string | undefined): Sna
   const out: Snap = notice === undefined ? { status: "signedOut" } : { status: "signedOut", notice };
   if (raw === null) return out;
   try {
-    const v = JSON.parse(raw) as Partial<{ token: unknown; expiresAt: unknown; role: unknown }>;
+    const v = JSON.parse(raw) as Partial<{ token: unknown; expiresAt: unknown; role: unknown; mustChangePassword: unknown }>;
     if (typeof v.token !== "string" || v.token === "" || typeof v.expiresAt !== "string" || !ROLES.includes(v.role as Role)) return out;
     if (!(Date.parse(v.expiresAt) > now)) return out;
-    return { status: "signedIn", role: v.role as Role, token: v.token, expiresAt: v.expiresAt };
+    return { status: "signedIn", role: v.role as Role, token: v.token, expiresAt: v.expiresAt, mustChangePassword: v.mustChangePassword === true };
   } catch {
     return out;
   }
@@ -67,8 +67,8 @@ function createStore(now: () => number) {
     },
     server: (): Snap => LOADING,
     /** Stores a session, or ends it (with an optional reason to show on the sign-in screen). */
-    set(next: { token: string; expiresAt: string; role: Role } | null, why?: string) {
-      memory = next ? JSON.stringify({ token: next.token, expiresAt: next.expiresAt, role: next.role }) : null;
+    set(next: { token: string; expiresAt: string; role: Role; mustChangePassword?: boolean } | null, why?: string) {
+      memory = next ? JSON.stringify({ token: next.token, expiresAt: next.expiresAt, role: next.role, ...(next.mustChangePassword === true ? { mustChangePassword: true } : {}) }) : null;
       try {
         if (memory !== null) sessionStorage.setItem(STORAGE_KEY, memory);
         else sessionStorage.removeItem(STORAGE_KEY);
@@ -96,6 +96,8 @@ function createStore(now: () => number) {
 export interface SessionValue {
   status: "loading" | "signedOut" | "signedIn";
   role?: Role;
+  /** True while the person is still on a password an operator gave them: the server lets their session do nothing else. */
+  mustChangePassword?: boolean;
   /** Why the person was signed out, when it was not their choice. */
   notice?: string;
   api: ApiClient;
@@ -154,7 +156,7 @@ export function SessionProvider({
         .refresh()
         // A person who signed out (or in again) while this was in flight must not get the renewed session back.
         .then((s) => {
-          if (started !== undefined && current()?.token === started) store.set({ token: s.token, expiresAt: s.expiresAt, role: s.role });
+          if (started !== undefined && current()?.token === started) store.set({ token: s.token, expiresAt: s.expiresAt, role: s.role, mustChangePassword: s.mustChangePassword === true });
         })
         .catch(() => undefined) // a refusal already ended the session in `guarded`; a network error lets the call try with the old token
         .finally(() => {
@@ -179,11 +181,11 @@ export function SessionProvider({
   const value = useMemo<SessionValue>(
     () => ({
       status: snap.status,
-      ...(snap.status === "signedIn" ? { role: snap.role } : {}),
+      ...(snap.status === "signedIn" ? { role: snap.role, ...(snap.mustChangePassword ? { mustChangePassword: true } : {}) } : {}),
       ...(snap.status === "signedOut" && snap.notice !== undefined ? { notice: snap.notice } : {}),
       api,
       now,
-      signIn: (info) => store.set({ token: info.token, expiresAt: info.expiresAt, role: info.role }),
+      signIn: (info) => store.set({ token: info.token, expiresAt: info.expiresAt, role: info.role, mustChangePassword: info.mustChangePassword === true }),
       signOut: () => store.set(null),
     }),
     [store, snap, api, now],

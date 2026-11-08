@@ -19,6 +19,8 @@ export interface SessionInfo {
   token: string;
   expiresAt: string;
   role: Role;
+  /** The password is one an operator gave the person. Until it is changed the server lets the session do nothing else. */
+  mustChangePassword?: boolean;
   recoveryCodes?: string[];
 }
 

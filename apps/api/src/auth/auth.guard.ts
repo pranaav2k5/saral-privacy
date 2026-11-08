@@ -4,7 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import { Database } from "../db/database.js";
 import { StaffService } from "../staff/staff.service.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
-import { ACCESS_KEY, type AccessRule, type HttpRequest } from "./access.js";
+import { ACCESS_KEY, PENDING_PASSWORD_KEY, type AccessRule, type HttpRequest } from "./access.js";
 import { hashSecret, parseApiKey, type Scope } from "./api-keys.js";
 
 const INVALID = "invalid API key";
@@ -37,6 +37,9 @@ export class AuthGuard implements CanActivate {
       if (session === undefined) throw new UnauthorizedException("invalid or expired session");
       if (!(rule.scopes ?? []).some((s) => session.scopes.includes(s))) {
         throw new ForbiddenException(`this session needs one of the scopes: ${(rule.scopes ?? []).join(", ")}`);
+      }
+      if (session.mustChangePassword === true && this.reflector.getAllAndOverride<boolean | undefined>(PENDING_PASSWORD_KEY, [context.getHandler(), context.getClass()]) !== true) {
+        throw new ForbiddenException({ error: "password_change_required", message: "Choose a new password before you do anything else." });
       }
       req.auth = session;
       return true;

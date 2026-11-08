@@ -72,3 +72,56 @@ describe("RequireRole", () => {
     expect(screen.getByText("Your role does not have access to this page.")).toBeTruthy();
   });
 });
+
+describe("a person who has not yet chosen their own password", () => {
+  const frame = (role: "dpo" | "tenant_admin" = "dpo") =>
+    renderScreen(<AppFrame><p>the requested page</p></AppFrame>, { role, mustChangePassword: true, routes: { "GET /v1/auth/me": { body: { email: "officer@example.org" } } } });
+
+  test("is shown the change-password form in place of any page, and the page they asked for is not shown", async () => {
+    frame();
+    expect(await screen.findByRole("heading", { name: "Change your password" })).toBeTruthy();
+    expect(screen.queryByText("the requested page")).toBeNull();
+    expect(screen.getByText(/An operator gave you this password/)).toBeTruthy();
+  });
+
+  test("has no menu to other pages, only the way out", async () => {
+    frame("tenant_admin");
+    await screen.findByRole("heading", { name: "Change your password" });
+    expect(links()).toEqual([["Skip to content", "#main"]]);
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+    expect(screen.getByText("Administrator")).toBeTruthy();
+  });
+
+  test("is shown the same on any address", async () => {
+    mockPath = "/requests";
+    frame();
+    expect(await screen.findByRole("heading", { name: "Change your password" })).toBeTruthy();
+    expect(screen.queryByText("the requested page")).toBeNull();
+  });
+
+  test("gets the page they asked for as soon as the password is changed", async () => {
+    mockPath = "/requests";
+    const v = renderScreen(<AppFrame><p>the requested page</p></AppFrame>, {
+      role: "dpo",
+      mustChangePassword: true,
+      routes: {
+        "GET /v1/auth/me": { body: { email: "officer@example.org" } },
+        "POST /v1/auth/password": { body: { token: "st_v1.new.sig", expiresAt: "2026-11-06T10:15:00.000Z", role: "dpo", mustChangePassword: false } },
+      },
+    });
+    await screen.findByRole("heading", { name: "Change your password" });
+    fireEvent.change(screen.getByLabelText("Current password"), { target: { value: "the one the operator gave" } });
+    fireEvent.change(screen.getByLabelText("New password"), { target: { value: "a brand new long passphrase" } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "a brand new long passphrase" } });
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    expect(await screen.findByText("the requested page")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Change your password" })).toBeNull();
+    expect(v.callsTo("POST", "/v1/auth/password")).toHaveLength(1);
+  });
+
+  test("an ordinary session is not held back", () => {
+    renderScreen(<AppFrame><p>the requested page</p></AppFrame>, { role: "dpo" });
+    expect(screen.getByText("the requested page")).toBeTruthy();
+    expect(screen.queryByText(/An operator gave you this password/)).toBeNull();
+  });
+});

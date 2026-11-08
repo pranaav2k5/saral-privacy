@@ -16,7 +16,7 @@ export const NOW = Date.parse("2026-11-06T10:00:00.000Z");
  * first call with its first entry, the second with its second, and keeps repeating the last.
  * A call with no canned answer gets a 599 that names it, so a missing route fails loudly.
  */
-export function renderScreen(ui: ReactElement, opts: { routes?: Record<string, Route | Route[]>; role?: Role | null } = {}) {
+export function renderScreen(ui: ReactElement, opts: { routes?: Record<string, Route | Route[]>; role?: Role | null; /** The signed-in person has not yet replaced the password an operator gave them. */ mustChangePassword?: boolean } = {}) {
   const calls: Call[] = [];
   const used = new Map<string, number>();
   const routes = opts.routes ?? {};
@@ -49,7 +49,7 @@ export function renderScreen(ui: ReactElement, opts: { routes?: Record<string, R
 
   sessionStorage.clear();
   if (opts.role) {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ token: "st_v1.test.sig", expiresAt: new Date(NOW + 15 * 60_000).toISOString(), role: opts.role }));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ token: "st_v1.test.sig", expiresAt: new Date(NOW + 15 * 60_000).toISOString(), role: opts.role, ...(opts.mustChangePassword ? { mustChangePassword: true } : {}) }));
   }
   const view = render(
     <SessionProvider baseUrl="https://api.example.org" fetchFn={fetchFn} now={() => NOW}>

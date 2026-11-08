@@ -19,7 +19,7 @@ function wordsFor(e: unknown): string {
 }
 
 export function AccountPage() {
-  const { api, role, signIn } = useSession();
+  const { api, role, signIn, mustChangePassword } = useSession();
   const load = useCallback(() => api.me(), [api]);
   const me = useLoad(load);
   const [current, setCurrent] = useState("");
@@ -67,6 +67,11 @@ export function AccountPage() {
   return (
     <div className="flex max-w-prose flex-col gap-6">
       <h1 className="text-2xl font-semibold">Your account</h1>
+      {mustChangePassword && (
+        <p role="note" className="rounded border border-action bg-neutral-bg px-3 py-2">
+          An operator gave you this password, so they know it. Choose your own to continue. Nothing else in the dashboard opens until you do.
+        </p>
+      )}
       {me.status === "ready" && (
         <p>
           Signed in as <strong>{me.data.email ?? "an unnamed account"}</strong>{role ? ` (${ROLE_NAME[role]})` : ""}.

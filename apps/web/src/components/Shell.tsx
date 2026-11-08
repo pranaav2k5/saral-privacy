@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import type { Role } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { Button } from "./ui";
+import { AccountPage } from "./AccountPage";
 import { SignIn } from "./SignIn";
 
 const ROLE_NAME: Record<Role, string> = { tenant_admin: "Administrator", dpo: "Data protection officer" };
@@ -28,7 +29,7 @@ export const NAV: Record<Role, readonly { href: string; label: string }[]> = {
 };
 
 export function AppFrame({ children }: { children: ReactNode }) {
-  const { status, role, signOut } = useSession();
+  const { status, role, signOut, mustChangePassword } = useSession();
   const path = usePathname();
   if (status === "loading") return <p role="status" className="p-6">Loading…</p>;
   if (status === "signedOut" || !role) return <SignIn />;
@@ -38,7 +39,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
       <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-rule bg-sheet px-4 py-2">
         <span className="font-semibold">Saral Privacy</span>
         <nav aria-label="Main" className="flex flex-wrap gap-1">
-          {NAV[role].map((item) => (
+          {(mustChangePassword ? [] : NAV[role]).map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -52,7 +53,8 @@ export function AppFrame({ children }: { children: ReactNode }) {
         <span className="ml-auto text-sm text-ink-soft">{ROLE_NAME[role]}</span>
         <Button type="button" onClick={signOut} className="bg-sheet !text-action border border-action">Sign out</Button>
       </header>
-      <main id="main" className="mx-auto w-full max-w-5xl flex-1 p-4 md:p-6">{children}</main>
+      {/* Until the person has chosen their own password the server refuses everything else, so no other page is shown. */}
+      <main id="main" className="mx-auto w-full max-w-5xl flex-1 p-4 md:p-6">{mustChangePassword ? <AccountPage /> : children}</main>
     </div>
   );
 }
