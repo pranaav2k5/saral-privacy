@@ -16,6 +16,11 @@ export default function Home() {
           Write a privacy notice
         </Link>
       </p>
+      <p>
+        <Link href="/verify" className="text-action underline underline-offset-4">
+          Check a consent receipt
+        </Link>
+      </p>
     </main>
   );
 }

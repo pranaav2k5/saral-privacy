@@ -457,7 +457,7 @@ This section records what exists in the repository against the scope in section 
 |---|---|---|---|
 | 1. Notice generator, free public version | Built | `apps/site` (`/notice-generator`), `packages/notice` | Legal and native-speaker review of the English and Hindi templates (they are AI-drafted). A public URL for each notice (publishing and listing exist in the API and the dashboard, threat model 0010). |
 | 2. Consent capture, web SDK | Built | `packages/sdk-js` | Age gate for children (Rule 10), hosting and Subresource Integrity, proof that the person controls the identifier, human-reviewed Hindi. |
-| 3. Signed consent receipts | Built | `packages/receipts`, API routes, `/.well-known/jwks.json` | KMS-held signing key (a development key provider exists). Public verifier page. |
+| 3. Signed consent receipts | Built | `packages/receipts`, API routes, `/.well-known/jwks.json` | KMS-held signing key (a development key provider exists). A way to see whether a consent has since been withdrawn (the verifier page cannot say). |
 | 4. Tamper-evident audit log | Built (library, database, verify and export endpoints, nightly job to a folder, standalone verifier) | `packages/audit-chain`, migration 0002, `/v1/audit/*` | The S3 Object Lock write and the schedule for the nightly anchor job (the job and a folder store exist: `pnpm --filter @saral/api anchor`); the performance benchmark planned for week 8. The standalone verifier (`saral-audit-verify`) exists. |
 | 5. Data-principal rights (DSR) | Built | `apps/api/src/dsr`, migration 0006 | Confirmation of the 30-day due date and of the erasure design with the lawyer advisor; the wallet side (a person tracking their own request); compiling an access response automatically. |
 | 6. Webhooks | Built | `apps/api/src/webhooks` | An overlap window for a rotated secret (the old secret stops working at once); re-enabling an endpoint. (Delivery log, manual redelivery, auto-disable of failing endpoints, and disable and rotate routes exist.) |
@@ -470,7 +470,7 @@ This section records what exists in the repository against the scope in section 
 | 10. DPO dashboard | Built for the core screens (`apps/web`: sign-in with MFA, overview, rights-request queue with deadlines and decisions, audit verification, consent search and overview, breach workflow, notice publishing, webhook integrations, account and password change; LLD section 11, threat models 0009 and 0010). Not built: a funnel from banner views to consents (views are not recorded), a script content security policy. |
 | 11. Four more languages | Not started |
 | 12. External VAPT | Not started. Book the slot in week 6 as planned. |
-| 13. Public verifier page and JWKS | JWKS built; verifier page not built |
+| 13. Public verifier page and JWKS | Built. JWKS served by the API; the verifier page is `/verify` in `apps/site` (`src/lib/receipt-verify.ts`, `src/components/VerifyReceipt.tsx`, threat model 0014). Not built: a public notice-text check against the receipt's fingerprint, a withdrawal status check, and a key-rotation history. |
 
 Cross-cutting work not done: KMS adapters and the production deployment (only the audit anchor bucket Terraform module exists), the AWS cost estimate (week 3), the IndicTrans2 benchmark, all discovery, legal and go-to-market work in sections 8 and 12 (these are not engineering tasks), and the open decisions in section 13.
 

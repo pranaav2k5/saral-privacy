@@ -12,7 +12,7 @@ Status: describes the code as built on 2026-11-06. Sections 9 to 11 describe par
 | `packages/notice` | `validateNoticeInput`, `renderNotice`, `canonicalNoticeText`, `noticeSha256`. |
 | `packages/sdk-js` | `init`, the dialog and its state. tsup builds IIFE, ESM and CJS. |
 | `apps/api` | NestJS 12 (ESM). `src/` code, `db/migrations/` SQL, `test/` end-to-end and database tests. |
-| `apps/site` | Next.js 16: home page and the notice generator (client-side only). |
+| `apps/site` | Next.js 16: home page, the notice generator (client-side only) and the receipt verifier at `/verify`. |
 | `apps/web`, `apps/wallet`, `apps/ml` | Shells with a heading or a health route. |
 | `infra/terraform` | Audit anchor bucket module and the dev, staging and prod stacks. |
 
@@ -201,6 +201,12 @@ Decisions and parameters are in `docs/adr/0004-staff-authentication.md`; threats
 **Configuration.** `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:4000`). Pages are sent with a content security policy that blocks framing, other form targets, a changed base address and plugins (`src/lib/security-headers.ts`). It does not restrict scripts yet; see threat model 0009.
 
 **Not built.** A funnel from banner views to consents (views are not recorded), and a verifier panel. The API client is hand-written to match `docs/design/openapi.yaml`, not generated from it.
+
+### 11.1 Receipt verifier (`apps/site`, `/verify`)
+
+`src/lib/receipt-verify.ts` checks a consent receipt in the browser with Web Crypto and applies the rules of the server's own check in `packages/receipts` (it does not import that package, which uses Node's crypto): the pasted text is trimmed and at most 16 KiB; three parts, each canonical base64url (no padding, no other alphabet, no non-canonical encoding); the header is a JSON object whose `alg` is exactly RS256; the payload is a JSON object; the `kid` must be in the key set; the key must be an RSA public JWK with `use` sig or absent, `alg` RS256 or absent, a modulus of at least 2048 bits and an exponent of at least 65537; then the RSASSA-PKCS1-v1_5 SHA-256 signature; then the fields of a consent receipt (version KI-CR-v1.1.0, a UUID v4 receipt id, an integer consent time, at least one controller, service and purpose, each purpose with its categories, data, `termination` and third-party flag). A failure is one of seven codes, each with plain words (`reasonInWords`). The key set must be an object with at most 100 key objects.
+
+`VerifyReceipt` fetches `{API base}/.well-known/jwks.json` (the base is `NEXT_PUBLIC_API_BASE_URL`, default `http://localhost:4000`) with no cookies, no body and a 10 second limit, and nothing else. The receipt never goes in a request. A failure to get the keys is said to be that, not a fault of the receipt. A valid receipt shows the key id and where it is published, the receipt number, the consent time in UTC, the organisation, the language, the policy address and the notice fingerprint, and for each purpose its name, kinds, personal data, how to withdraw (the receipt's `termination`, which is an address, not a length of time) and who it is shared with. Every value is shown as text: the policy address is never a link, and markup in a receipt is not interpreted. The page lists what the check does not show: who the person is, whether the consent is still in force, and the notice text itself (only its fingerprint).
 
 ## 12. Tests
 
