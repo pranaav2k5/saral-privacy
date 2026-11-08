@@ -9,7 +9,7 @@ const queue = [
   { ...v, id: "3", type: "correction", state: "submitted", dueAt: "2026-12-01T10:00:00.000Z" }, // plenty of time
   { ...v, id: "4", type: "grievance", state: "fulfilled", dueAt: "2026-10-05T10:00:00.000Z" }, // finished, so never overdue
 ];
-const dpo = (routes: Record<string, Route | Route[]> = {}) => renderScreen(<Overview />, { role: "dpo", routes: { "GET /v1/dsr": { body: queue }, ...routes } });
+const dpo = (routes: Record<string, Route | Route[]> = {}) => renderScreen(<Overview />, { role: "dpo", routes: { "GET /v1/dsr": { body: queue }, "GET /v1/breaches": { body: [] }, ...routes } });
 
 test("a data protection officer sees how many requests are open, overdue and due soon", async () => {
   dpo();
@@ -55,7 +55,7 @@ const notice = (id: string) => ({ id, version: 1, language: "en", reviewStatus: 
 const admin = (routes: Record<string, Route | Route[]> = {}) =>
   renderScreen(<Overview />, {
     role: "tenant_admin",
-    routes: { "GET /v1/webhook-endpoints": { body: [endpoint("a", null), endpoint("b", "2026-10-02T00:00:00.000Z")] }, "GET /v1/notices": { body: [notice("n1"), notice("n2")] }, ...routes },
+    routes: { "GET /v1/webhook-endpoints": { body: [endpoint("a", null), endpoint("b", "2026-10-02T00:00:00.000Z")] }, "GET /v1/notices": { body: [notice("n1"), notice("n2")] }, "GET /v1/breaches": { body: [] }, ...routes },
   });
 
 test("an administrator sees the number of active endpoints and published notices, and never asks for the requests queue", async () => {
@@ -104,4 +104,64 @@ test("while the notices are still loading it says so, even though the endpoints 
   expect(screen.queryByText("Active endpoints")).toBeNull();
   release();
   expect(await screen.findByText("Published notices")).toBeTruthy();
+});
+
+// The harness clock is 2026-11-06T10:00:00Z.
+const breach = (over: Record<string, unknown> = {}) => ({
+  id: "b1", state: "reported", title: "Laptop lost", description: "d", discoveredAt: "2026-11-03T09:00:00.000Z", occurredAt: null, nature: ["confidentiality"], dataCategories: ["names"],
+  approxPrincipalsAffected: null, likelyConsequences: "c", measuresTaken: "m", reportedAt: "2026-11-03T09:30:00.000Z", reportedBy: "staff:x", boardDeadline: "2026-11-09T09:00:00.000Z",
+  boardOverdue: false, boardNotifiedLate: null, signedOffAt: null, signedOffBy: null, boardNotifiedAt: null, boardReference: null, principalsNotifiedAt: null, principalsHow: null,
+  principalsCount: null, closedAt: null, closingNote: null, ...over,
+});
+const PAST = "2026-11-05T09:00:00.000Z";
+const SOON = "2026-11-06T20:00:00.000Z";
+const told = { state: "board_notified", boardNotifiedAt: "2026-11-04T10:00:00.000Z", boardNotifiedLate: false };
+
+describe.each([
+  ["a data protection officer", dpo, "Open requests"],
+  ["an administrator", admin, "Active endpoints"],
+] as const)("breaches on the overview of %s", (_who, open, ready) => {
+  test("one past the Board's deadline and not yet reported is called out, with a link", async () => {
+    open({ "GET /v1/breaches": { body: [breach({ boardDeadline: PAST })] } });
+    const note = await screen.findByText("1 breach that has not been reported to the Board is past the deadline.");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(screen.getByRole("link", { name: "Go to breaches" }).getAttribute("href")).toBe("/breaches");
+  });
+
+  test("several overdue ones use the plural", async () => {
+    open({ "GET /v1/breaches": { body: [breach({ boardDeadline: PAST }), breach({ id: "b2", boardDeadline: PAST, state: "signed_off" })] } });
+    expect(await screen.findByText("2 breaches that have not been reported to the Board are past the deadline.")).toBeTruthy();
+  });
+
+  test("one due within 24 hours is flagged before it is late", async () => {
+    open({ "GET /v1/breaches": { body: [breach({ boardDeadline: SOON })] } });
+    expect(await screen.findByText("1 breach must be reported to the Board within 24 hours.")).toBeTruthy();
+  });
+
+  test("overdue wins over due soon, and the message counts each kind", async () => {
+    open({ "GET /v1/breaches": { body: [breach({ boardDeadline: PAST }), breach({ id: "b2", boardDeadline: SOON })] } });
+    expect(await screen.findByText("1 breach that has not been reported to the Board is past the deadline.")).toBeTruthy();
+    expect(screen.getByText("1 breach must be reported to the Board within 24 hours.")).toBeTruthy();
+  });
+
+  test("one the Board has been told about (even late), one with time left and one closed say nothing", async () => {
+    open({ "GET /v1/breaches": { body: [breach({ ...told, boardDeadline: PAST }), breach({ id: "b2", boardDeadline: "2026-11-09T09:00:00.000Z" }), breach({ id: "b3", ...told, state: "closed", boardDeadline: PAST }), breach({ id: "b4", ...told, boardNotifiedLate: true, boardDeadline: "2026-11-04T09:00:00.000Z" })] } });
+    await screen.findByText(ready);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/breach/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Go to breaches" })).toBeNull();
+  });
+
+  test("an organisation with no breach sees nothing about breaches", async () => {
+    open();
+    await screen.findByText(ready);
+    expect(screen.queryByText(/breach/i)).toBeNull();
+  });
+
+  test("if the breaches cannot be read it says so quietly and the rest of the overview still shows", async () => {
+    open({ "GET /v1/breaches": { status: 500, body: { message: "The database is busy." } } });
+    expect(await screen.findByText("We could not check for breaches that are due to be reported.")).toBeTruthy();
+    expect(screen.getByText(ready)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });
