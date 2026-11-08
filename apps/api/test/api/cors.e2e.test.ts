@@ -37,6 +37,22 @@ describe("CORS for the browser SDK", () => {
     expect(res.headers["access-control-allow-methods"]).toMatch(/DELETE/);
   });
 
+  test("a preflight for PATCH is allowed, because the dashboard corrects a breach report that way", async () => {
+    const res = await api
+      .http()
+      .options("/v1/breaches/00000000-0000-4000-8000-000000000000")
+      .set("Origin", ORIGIN)
+      .set("Access-Control-Request-Method", "PATCH")
+      .set("Access-Control-Request-Headers", "authorization,content-type");
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-methods"]).toMatch(/PATCH/);
+  });
+
+  test("only the methods the API uses are allowed", async () => {
+    const res = await api.http().options("/v1/breaches").set("Origin", ORIGIN).set("Access-Control-Request-Method", "POST");
+    expect((res.headers["access-control-allow-methods"] as string).split(",").sort()).toEqual(["DELETE", "GET", "OPTIONS", "PATCH", "POST"]);
+  });
+
   test("cookies are never allowed: authentication is by key only", async () => {
     const res = await api.http().options("/v1/consents").set("Origin", ORIGIN).set("Access-Control-Request-Method", "POST");
     expect(res.headers["access-control-allow-credentials"]).toBeUndefined();

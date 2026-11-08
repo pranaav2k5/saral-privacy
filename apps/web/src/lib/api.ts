@@ -63,6 +63,59 @@ export interface DeliveryRecord {
   lastError: string | null;
 }
 
+export type BreachState = "reported" | "signed_off" | "board_notified" | "closed";
+export type BreachNature = "confidentiality" | "integrity" | "availability";
+
+/** A personal data breach incident, from the first report to the closing note. */
+export interface Breach {
+  id: string;
+  state: BreachState;
+  title: string;
+  description: string;
+  discoveredAt: string;
+  occurredAt: string | null;
+  nature: BreachNature[];
+  dataCategories: string[];
+  approxPrincipalsAffected: number | null;
+  likelyConsequences: string;
+  measuresTaken: string;
+  reportedAt: string;
+  reportedBy: string;
+  boardDeadline: string;
+  boardOverdue: boolean;
+  boardNotifiedLate: boolean | null;
+  signedOffAt: string | null;
+  signedOffBy: string | null;
+  boardNotifiedAt: string | null;
+  boardReference: string | null;
+  principalsNotifiedAt: string | null;
+  principalsHow: string | null;
+  principalsCount: number | null;
+  closedAt: string | null;
+  closingNote: string | null;
+}
+
+export interface BreachRequest {
+  title: string;
+  description: string;
+  discoveredAt: string;
+  occurredAt?: string;
+  nature: BreachNature[];
+  dataCategories: string[];
+  approxPrincipalsAffected?: number;
+  likelyConsequences: string;
+  measuresTaken: string;
+}
+
+/** A correction: any of the fields, with `null` to clear the time it happened or the number of people. */
+export type BreachPatch = Partial<Omit<BreachRequest, "occurredAt" | "approxPrincipalsAffected">> & { occurredAt?: string | null; approxPrincipalsAffected?: number | null };
+
+export interface BreachDrafts {
+  boardNotification: string;
+  principalNotice: string;
+  boardDeadline: string;
+}
+
 export interface NoticeSummary {
   id: string;
   version: number;
@@ -176,6 +229,14 @@ export class ApiClient {
   createEndpoint = (url: string, events: WebhookEvent[]) => this.request<Endpoint & { secret: string }>("POST", "/v1/webhook-endpoints", { url, events });
   disableEndpoint = (id: string) => this.request<void>("DELETE", `/v1/webhook-endpoints/${encodeURIComponent(id)}`);
   rotateSecret = (id: string) => this.request<{ id: string; secret: string }>("POST", `/v1/webhook-endpoints/${encodeURIComponent(id)}/rotate-secret`);
+  listBreaches = () => this.request<Breach[]>("GET", "/v1/breaches");
+  reportBreach = (r: BreachRequest) => this.request<Breach>("POST", "/v1/breaches", r);
+  updateBreach = (id: string, patch: BreachPatch) => this.request<Breach>("PATCH", `/v1/breaches/${encodeURIComponent(id)}`, patch);
+  breachDrafts = (id: string) => this.request<BreachDrafts>("GET", `/v1/breaches/${encodeURIComponent(id)}/drafts`);
+  signOffBreach = (id: string) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/sign-off`);
+  recordBoardNotified = (id: string, body: { notifiedAt: string; reference: string }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/board-notified`, body);
+  recordPrincipalsNotified = (id: string, body: { how: string; count: number }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/principals-notified`, body);
+  closeBreach = (id: string, note: string) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/close`, { note });
   /** The most recent deliveries of an endpoint, newest first. */
   listDeliveries = (endpointId: string) => this.request<DeliveryRecord[]>("GET", `/v1/webhook-endpoints/${encodeURIComponent(endpointId)}/deliveries`);
   /** Puts a failed delivery back in the queue. */

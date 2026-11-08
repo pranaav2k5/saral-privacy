@@ -9,7 +9,7 @@ import { AppModule } from "./app.module.js";
  */
 export function configureApp(app: INestApplication, options: { trustProxy?: number } = {}): void {
   // Retry-After is exposed so a page can tell the person how long to wait after a 429.
-  app.enableCors({ origin: true, methods: ["GET", "POST", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key"], exposedHeaders: ["Retry-After"], maxAge: 600 });
+  app.enableCors({ origin: true, methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key"], exposedHeaders: ["Retry-After"], maxAge: 600 });
   if (options.trustProxy !== undefined) (app.getHttpAdapter().getInstance() as { set(name: string, value: unknown): void }).set("trust proxy", options.trustProxy);
 }
 
