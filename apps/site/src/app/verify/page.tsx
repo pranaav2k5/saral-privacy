@@ -14,8 +14,9 @@ export default function VerifyPage() {
         <h1 className="text-3xl font-semibold tracking-tight">Check a consent receipt</h1>
         <p className="mt-3 text-lg leading-relaxed text-ink-soft">
           When you agree to something through a Saral consent banner, you get a signed receipt. Paste it here to check that it was
-          signed with the key Saral publishes, and that nobody has changed it since. You do not have to trust this page: the check runs
-          in your browser, and the key and the method are public.
+          signed with the key Saral publishes, and that nobody has changed it since. The check runs in your browser and nothing you
+          paste is sent anywhere. It is still part of this site, though, and someone who ran this site could change it. A check that
+          does not depend on this site needs a tool of your own and the public key from a source you trust. The method is public and short.
         </p>
       </header>
       <VerifyReceipt apiBase={API_BASE_URL} />

@@ -87,6 +87,22 @@ describe("a receipt that must not be accepted", () => {
     await fails(good(), "bad_key", { keys: [jwk] });
   });
 
+  test("a key whose numbers are far larger than any real key is refused before anything is decoded or imported", async () => {
+    let imported = 0;
+    const subtle = { importKey: async () => { imported += 1; throw new Error("no"); }, verify: async () => true } as unknown as SubtleCrypto;
+    // Both are valid base64url of non-zero numbers, so only the size limit, and not an error in decoding or a weak key, can refuse them.
+    for (const jwk of [{ ...K.jwk, n: "B".repeat(2052) }, { ...K.jwk, e: "AQAB".repeat(5) }]) {
+      const r = await verifyReceiptToken(good(), { keys: [jwk] }, subtle);
+      expect(r).toMatchObject({ ok: false, code: "bad_key" });
+    }
+    expect(imported).toBe(0);
+  });
+
+  test("a real key is within those limits", async () => {
+    expect(String(K.jwk.n).length).toBeLessThanOrEqual(2048);
+    expect(String(K.jwk.e).length).toBeLessThanOrEqual(16);
+  });
+
   test.each([
     ["nothing", ""],
     ["two parts", "aaa.bbb"],

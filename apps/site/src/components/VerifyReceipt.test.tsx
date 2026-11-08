@@ -170,3 +170,94 @@ describe("checking again", () => {
     await waitFor(() => expect((screen.getByLabelText("Consent receipt") as HTMLTextAreaElement).value).toBe(good()));
   });
 });
+
+describe("what the page shows and announces", () => {
+  test("the time is shown correctly even for a year with more than four digits", async () => {
+    setup();
+    paste(sign(K.privateKey, HEADER, claims({ consentTimestamp: 253402300800 })));
+    check();
+    const result = await screen.findByRole("region", { name: "The signature is valid" });
+    expect(result.textContent).toContain("00:00 UTC");
+    expect(result.textContent).not.toContain("01T00");
+  });
+
+  test("a success is announced politely and focus goes to its heading, so a screen reader user finds the details", async () => {
+    setup();
+    const live = screen.getByRole("status");
+    expect(live.textContent).toBe("");
+    paste(good());
+    check();
+    await screen.findByRole("region", { name: "The signature is valid" });
+    expect(screen.getByRole("status").textContent).toMatch(/The signature is valid\. The details are below/);
+    expect(document.activeElement?.textContent).toBe("The signature is valid");
+  });
+
+  test("a refusal is not announced as a success", async () => {
+    setup();
+    paste("not a receipt");
+    check();
+    await screen.findByRole("alert");
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+});
+
+describe("a result belongs to the receipt that was checked", () => {
+  test("editing the receipt after a result clears it, so a valid message is never beside text that was not checked", async () => {
+    setup();
+    paste(good());
+    check();
+    await screen.findByRole("region", { name: "The signature is valid" });
+    paste(`${good()}x`);
+    expect(screen.queryByRole("region", { name: "The signature is valid" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  test("editing while a check is running drops its result, and the button is free again", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    setup(() => ({ body: JWKS, wait: gate }));
+    paste(good());
+    check();
+    await screen.findByRole("button", { name: "Checking…" });
+    paste("something else now");
+    release();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Check this receipt" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByRole("region", { name: "The signature is valid" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("the same when the keys could not be fetched: the edit drops that answer too", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    setup(() => ({ status: 500, body: {}, wait: gate }));
+    paste(good());
+    check();
+    await screen.findByRole("button", { name: "Checking…" });
+    paste("something else now");
+    release();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Check this receipt" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("checking again after such an edit gives the result for the new text", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    let first = true;
+    setup(() => {
+      if (first) {
+        first = false;
+        return { body: JWKS, wait: gate };
+      }
+      return { body: JWKS };
+    });
+    paste(good());
+    check();
+    await screen.findByRole("button", { name: "Checking…" });
+    paste("not a receipt");
+    release();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Check this receipt" }) as HTMLButtonElement).disabled).toBe(false));
+    check();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/not a consent receipt/);
+  });
+});

@@ -7,6 +7,9 @@
 
 export const MAX_TOKEN_CHARS = 16 * 1024;
 const MAX_KEYS = 100;
+/** The longest base64url a real RSA key's numbers take (a 8192-bit modulus is 1366 characters). Longer is refused before it is decoded. */
+const MAX_N_CHARS = 2048;
+const MAX_E_CHARS = 16;
 const MIN_MODULUS_BITS = 2048;
 const MIN_EXPONENT = BigInt(65537);
 const B64URL = /^[A-Za-z0-9_-]+$/;
@@ -89,6 +92,7 @@ async function importKey(jwk: Record<string, unknown>, subtle: SubtleCrypto): Pr
   if (jwk.kty !== "RSA" || typeof jwk.n !== "string" || typeof jwk.e !== "string") throw new Refused("bad_key", "the key is not an RSA public key");
   if (jwk.use !== undefined && jwk.use !== "sig") throw new Refused("bad_key", "the key is not for signatures");
   if (jwk.alg !== undefined && jwk.alg !== "RS256") throw new Refused("bad_key", "the key is for another algorithm");
+  if (jwk.n.length > MAX_N_CHARS || jwk.e.length > MAX_E_CHARS) throw new Refused("bad_key", "the key's numbers are larger than any real key's");
   let n: Uint8Array;
   let e: Uint8Array;
   try {
@@ -106,42 +110,92 @@ async function importKey(jwk: Record<string, unknown>, subtle: SubtleCrypto): Pr
   }
 }
 
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const TEL = /^tel:\+[0-9][0-9.()-]{3,30}$/;
+const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+const bad = (why: string): never => {
+  throw new Refused("bad_claims", why);
+};
+const str = (field: string, v: unknown): string => (typeof v !== "string" || v.trim() === "" ? bad(`${field} must be a non-empty string`) : v);
+const bool = (field: string, v: unknown): boolean => (typeof v !== "boolean" ? bad(`${field} must be true or false`) : v);
+function strings(field: string, v: unknown, nonEmpty: boolean): string[] {
+  if (!Array.isArray(v) || (nonEmpty && v.length === 0)) return bad(`${field} must be a list of text`);
+  return (v as unknown[]).map((x) => str(field, x));
+}
+function httpsUrl(field: string, v: unknown): string {
+  const s = str(field, v);
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    return bad(`${field} must be an address`);
+  }
+  if (u.protocol !== "https:" || u.username !== "" || u.password !== "") bad(`${field} must be an https address without credentials`);
+  return s;
+}
+function objects(field: string, v: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(v) || v.length === 0) return bad(`${field} must be a non-empty list`);
+  return (v as unknown[]).map((o) => (isObject(o) ? o : bad(`${field} must hold objects`)));
+}
+
+/**
+ * The fields of a consent receipt, with the same rules as `validateClaims` in `packages/receipts` (a test runs both over the same payloads).
+ * Nothing is shown from a receipt that fails any of them, even if its signature is right.
+ */
 function summarise(c: unknown): ReceiptSummary {
-  const bad = (why: string): never => {
-    throw new Refused("bad_claims", why);
-  };
   if (!isObject(c)) return bad("the receipt is not an object");
   if (c.version !== "KI-CR-v1.1.0") bad("the version is not KI-CR-v1.1.0");
-  if (typeof c.consentReceiptID !== "string" || !UUID_V4.test(c.consentReceiptID)) bad("the receipt id is not a UUID");
+  str("jurisdiction", c.jurisdiction);
   const ts = c.consentTimestamp;
+  // The server accepts any whole number from zero; a time too far off to be a date cannot be shown, so it is refused here.
   if (typeof ts !== "number" || !Number.isInteger(ts) || ts < 0 || ts > MAX_SECONDS) bad("the consent time is not a time");
-  if (typeof c.policyUrl !== "string") bad("there is no policy address");
+  const iat = c.iat;
+  if (typeof iat !== "number" || !Number.isInteger(iat) || iat < 0) bad("iat must be a whole number");
+  str("collectionMethod", c.collectionMethod);
+  if (typeof c.consentReceiptID !== "string" || !UUID_V4.test(c.consentReceiptID)) bad("the receipt id is not a UUID");
   if (c.language !== undefined && (typeof c.language !== "string" || !/^[a-z]{2}$/.test(c.language))) bad("the language is not a code");
-  if (c.saralNoticeSha256 !== undefined && (typeof c.saralNoticeSha256 !== "string" || !SHA256_HEX.test(c.saralNoticeSha256))) bad("the notice fingerprint is not a hash");
-  if (!Array.isArray(c.piiControllers) || c.piiControllers.length === 0 || !c.piiControllers.every((x) => isObject(x) && typeof x.piiController === "string")) bad("there is no controller");
-  if (!Array.isArray(c.services) || c.services.length === 0) return bad("there is no service");
-  const services = (c.services as unknown[]).map((s) => {
-    if (!isObject(s) || typeof s.service !== "string" || !Array.isArray(s.purposes) || s.purposes.length === 0) return bad("a service has no purposes");
-    const purposes = (s.purposes as unknown[]).map((p): PurposeSummary => {
-      if (!isObject(p) || !isStrings(p.purposeCategory) || !isStrings(p.piiCategory) || typeof p.termination !== "string" || typeof p.thirdPartyDisclosure !== "boolean") return bad("a purpose is incomplete");
-      if (p.purpose !== undefined && typeof p.purpose !== "string") bad("a purpose has no readable name");
-      if (p.thirdPartyName !== undefined && typeof p.thirdPartyName !== "string") bad("a third party has no readable name");
-      return {
-        name: typeof p.purpose === "string" ? p.purpose : null,
-        categories: p.purposeCategory,
-        data: p.piiCategory,
-        withdrawVia: p.termination,
-        sharedWith: p.thirdPartyDisclosure ? (typeof p.thirdPartyName === "string" ? p.thirdPartyName : "a third party that is not named") : null,
-      };
-    });
-    return { service: s.service, purposes };
+  if (typeof c.piiPrincipalId !== "string" || !UUID_ANY.test(c.piiPrincipalId)) bad("the principal id is not a pseudonymous UUID");
+  const controllers = objects("piiControllers", c.piiControllers).map((x) => {
+    const name = str("piiControllers.piiController", x.piiController);
+    str("piiControllers.contact", x.contact);
+    if (!EMAIL.test(str("piiControllers.email", x.email))) bad("a controller email is not an email address");
+    if (!TEL.test(str("piiControllers.phone", x.phone))) bad("a controller phone is not a tel: address");
+    if (!isObject(x.address)) return bad("a controller has no address");
+    for (const k of ["streetAddress", "addressLocality", "postalCode", "addressCountry"]) str(`piiControllers.address.${k}`, x.address[k]);
+    if (x.address.addressRegion !== undefined) str("piiControllers.address.addressRegion", x.address.addressRegion);
+    if (x.piiControllerUrl !== undefined) httpsUrl("piiControllers.piiControllerUrl", x.piiControllerUrl);
+    if (x.onBehalf !== undefined) bool("piiControllers.onBehalf", x.onBehalf);
+    return name;
   });
+  const policyUrl = httpsUrl("policyUrl", c.policyUrl);
+  const services = objects("services", c.services).map((s) => {
+    const service = str("services.service", s.service);
+    const purposes = objects("services.purposes", s.purposes).map((p): PurposeSummary => {
+      if (p.purpose !== undefined) str("purposes.purpose", p.purpose);
+      str("purposes.consentType", p.consentType);
+      const categories = strings("purposes.purposeCategory", p.purposeCategory, true);
+      const data = strings("purposes.piiCategory", p.piiCategory, true);
+      if (p.primaryPurpose !== undefined) bool("purposes.primaryPurpose", p.primaryPurpose);
+      const withdrawVia = str("purposes.termination", p.termination);
+      const shared = bool("purposes.thirdPartyDisclosure", p.thirdPartyDisclosure);
+      return { name: typeof p.purpose === "string" ? p.purpose : null, categories, data, withdrawVia, sharedWith: shared ? str("purposes.thirdPartyName", p.thirdPartyName) : null };
+    });
+    return { service, purposes };
+  });
+  for (const id of ["saralConsentId", "saralNoticeId"] as const) {
+    if (c[id] !== undefined && (typeof c[id] !== "string" || !UUID_ANY.test(c[id]))) bad(`${id} is not a UUID`);
+  }
+  if (c.saralNoticeSha256 !== undefined && (typeof c.saralNoticeSha256 !== "string" || !SHA256_HEX.test(c.saralNoticeSha256))) bad("the notice fingerprint is not a hash");
+  const sensitive = bool("sensitive", c.sensitive);
+  const spiCat = strings("spiCat", c.spiCat, false);
+  if (sensitive && spiCat.length === 0) bad("a sensitive receipt must list its categories");
   return {
     receiptId: c.consentReceiptID as string,
     consentedAt: new Date((ts as number) * 1000).toISOString(),
     language: c.language as string | undefined,
-    controllers: (c.piiControllers as Record<string, unknown>[]).map((x) => x.piiController as string),
-    policyUrl: c.policyUrl as string,
+    controllers,
+    policyUrl,
     noticeSha256: c.saralNoticeSha256 as string | undefined,
     services,
   };

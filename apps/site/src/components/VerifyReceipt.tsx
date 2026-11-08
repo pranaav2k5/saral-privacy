@@ -1,11 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { parseJwks, reasonInWords, verifyReceiptToken, type ReceiptSummary, type VerifyResult } from "@/lib/receipt-verify";
+import { fetchKeySet } from "@/lib/key-set";
+import { reasonInWords, verifyReceiptToken, type ReceiptSummary, type VerifyResult } from "@/lib/receipt-verify";
 
-const KEYS_TIMEOUT_MS = 10_000;
 const DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-const utc = (iso: string): string => `${DAY.format(new Date(iso))}, ${iso.slice(11, 16)} UTC`;
+/** The date, and the time taken from after the `T`, so a year with more than four digits does not move it. */
+const utc = (iso: string): string => `${DAY.format(new Date(iso))}, ${iso.slice(iso.indexOf("T") + 1, iso.indexOf("T") + 6)} UTC`;
+const focusHeading = (el: HTMLElement | null): void => el?.focus();
 
 type Outcome = { kind: "valid"; kid: string; summary: ReceiptSummary } | { kind: "refused"; message: string } | { kind: "no_keys" };
 
@@ -15,12 +17,24 @@ export function VerifyReceipt({ apiBase, fetchFn }: { apiBase: string; fetchFn?:
   const [busy, setBusy] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [announce, setAnnounce] = useState("");
   const running = useRef(false);
+  // Counts the edits of the box. A check that finishes after an edit belongs to text that is no longer there, and is dropped.
+  const revision = useRef(0);
+
+  function edit(value: string) {
+    revision.current += 1;
+    setText(value);
+    setOutcome(null);
+    setEmpty(false);
+    setAnnounce("");
+  }
 
   async function check(e: React.FormEvent) {
     e.preventDefault();
     if (running.current) return;
     setOutcome(null);
+    setAnnounce("");
     if (text.trim() === "") {
       setEmpty(true);
       return;
@@ -28,25 +42,17 @@ export function VerifyReceipt({ apiBase, fetchFn }: { apiBase: string; fetchFn?:
     setEmpty(false);
     running.current = true;
     setBusy(true);
+    const mine = revision.current;
     try {
-      let jwks: ReturnType<typeof parseJwks> = null;
-      const abort = new AbortController();
-      const timer = setTimeout(() => abort.abort(), KEYS_TIMEOUT_MS);
-      try {
-        // Only the public keys are fetched: no cookies, no body, and the receipt is not in the address.
-        const res = await (fetchFn ?? fetch)(keysUrl, { credentials: "omit", cache: "no-store", signal: abort.signal });
-        jwks = res.ok ? parseJwks(await res.json()) : null;
-      } catch {
-        jwks = null;
-      } finally {
-        clearTimeout(timer);
-      }
+      const jwks = await fetchKeySet(keysUrl, fetchFn);
       if (jwks === null) {
-        setOutcome({ kind: "no_keys" });
+        if (revision.current === mine) setOutcome({ kind: "no_keys" });
         return;
       }
       const result: VerifyResult = await verifyReceiptToken(text, jwks);
+      if (revision.current !== mine) return;
       setOutcome(result.ok ? { kind: "valid", kid: result.kid, summary: result.summary } : { kind: "refused", message: result.message || reasonInWords(result.code) });
+      if (result.ok) setAnnounce("The signature is valid. The details are below.");
     } finally {
       running.current = false;
       setBusy(false);
@@ -55,6 +61,7 @@ export function VerifyReceipt({ apiBase, fetchFn }: { apiBase: string; fetchFn?:
 
   return (
     <div className="flex flex-col gap-8">
+      <p role="status" aria-live="polite" className="sr-only">{announce}</p>
       <form onSubmit={(e) => void check(e)} noValidate className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <label htmlFor="receipt" className="font-medium">Consent receipt</label>
@@ -65,7 +72,7 @@ export function VerifyReceipt({ apiBase, fetchFn }: { apiBase: string; fetchFn?:
             spellCheck={false}
             autoComplete="off"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => edit(e.target.value)}
             className="w-full rounded-md border border-field bg-white px-3 py-2 font-mono text-sm"
           />
         </div>
@@ -95,7 +102,7 @@ export function VerifyReceipt({ apiBase, fetchFn }: { apiBase: string; fetchFn?:
       {outcome?.kind === "valid" && (
         <>
           <section aria-labelledby="valid-h" className="flex flex-col gap-4 rounded-md border border-ok-fg bg-ok-bg p-5 text-ink">
-            <h2 id="valid-h" className="text-xl font-semibold text-ok-fg">The signature is valid</h2>
+            <h2 id="valid-h" ref={focusHeading} tabIndex={-1} className="text-xl font-semibold text-ok-fg">The signature is valid</h2>
             <p>
               This receipt was signed with key <code>{outcome.kid}</code> published at {apiBase}, and it has not been changed since.
             </p>
