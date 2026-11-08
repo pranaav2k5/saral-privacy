@@ -114,6 +114,26 @@ describe("ApiClient", () => {
     expect(calls[1]?.init.body).toBeUndefined();
   });
 
+  test("the record of processing is listed and read from its own addresses, an id is encoded, and a save is a POST of the record with a note and the version it started from only when there are such", async () => {
+    const { api, calls } = client(() => ({ body: {} }));
+    await api.listRopa();
+    expect([calls[0]?.init.method, calls[0]?.url]).toEqual(["GET", "https://api.example.org/v1/ropa"]);
+    await api.latestRopa();
+    expect([calls[1]?.init.method, calls[1]?.url]).toEqual(["GET", "https://api.example.org/v1/ropa/latest"]);
+    await api.getRopa("a/b c");
+    expect([calls[2]?.init.method, calls[2]?.url]).toEqual(["GET", "https://api.example.org/v1/ropa/a%2Fb%20c"]);
+    const document = { schema: "saral.ropa/1" } as never;
+    await api.saveRopa(document);
+    expect([calls[3]?.init.method, calls[3]?.url]).toEqual(["POST", "https://api.example.org/v1/ropa"]);
+    expect(JSON.parse(calls[3]?.init.body as string)).toEqual({ document });
+    await api.saveRopa(document, "Added payroll");
+    expect(JSON.parse(calls[4]?.init.body as string)).toEqual({ document, note: "Added payroll" });
+    await api.saveRopa(document, undefined, 0);
+    expect(JSON.parse(calls[5]?.init.body as string)).toEqual({ document, basedOn: 0 });
+    await api.saveRopa(document, "Moved", 7);
+    expect(JSON.parse(calls[6]?.init.body as string)).toEqual({ document, note: "Moved", basedOn: 7 });
+  });
+
   test("a person's consents are searched with the identifier in a POST body and never in the address, and the summary asks for a number of days", async () => {
     const { api, calls } = client(() => ({ body: { consents: [], truncated: false } }));
     await api.searchConsents("+919810000001");

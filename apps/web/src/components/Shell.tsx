@@ -18,6 +18,7 @@ export const NAV: Record<Role, readonly { href: string; label: string }[]> = {
     { href: "/requests", label: "Requests" },
     { href: "/consents", label: "Consents" },
     { href: "/breaches", label: "Breaches" },
+    { href: "/ropa", label: "Records" },
     { href: "/audit", label: "Audit" },
     { href: "/account", label: "Account" },
   ],
@@ -25,6 +26,7 @@ export const NAV: Record<Role, readonly { href: string; label: string }[]> = {
     { href: "/", label: "Overview" },
     { href: "/notices", label: "Notices" },
     { href: "/breaches", label: "Breaches" },
+    { href: "/ropa", label: "Records" },
     { href: "/audit", label: "Audit" },
     { href: "/integrations", label: "Integrations" },
     { href: "/account", label: "Account" },
@@ -38,8 +40,8 @@ export function AppFrame({ children }: { children: ReactNode }) {
   if (status === "signedOut" || !role) return <SignIn />;
   return (
     <div className="flex min-h-screen flex-col">
-      <a href="#main" className="sr-only focus:not-sr-only focus:p-3">Skip to content</a>
-      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-rule bg-sheet px-4 py-2">
+      <a href="#main" className="sr-only focus:not-sr-only focus:p-3 print:hidden">Skip to content</a>
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-rule bg-sheet px-4 py-2 print:hidden">
         <span className="font-semibold">Saral Privacy</span>
         <nav aria-label="Main" className="flex flex-wrap gap-1">
           {(mustChangePassword ? [] : NAV[role]).map((item) => (
