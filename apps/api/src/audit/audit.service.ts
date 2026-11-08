@@ -48,6 +48,9 @@ export class AuditService {
     @Inject(KEY_PROVIDER) private readonly keys: KeyProvider,
   ) {}
 
+  /** The clock for entry times, in milliseconds. Tests replace it; entries never go backwards whatever it says. */
+  now: () => number = () => Date.now();
+
   /**
    * Appends one entry inside the caller's transaction: lock the tenant's chain, read its head, seal, insert.
    * The lock is held until the caller commits, so concurrent appends for a tenant queue up and never fork the chain.
@@ -59,7 +62,7 @@ export class AuditService {
     const version = this.keys.currentAuditKeyVersion;
     const key = this.keys.auditHmacKey(version);
     if (key === undefined) throw new Error(`no audit key for version ${String(version)}`);
-    const ts = new Date(Math.max(Date.now(), head ? head.ts.getTime() : 0)).toISOString();
+    const ts = new Date(Math.max(this.now(), head ? head.ts.getTime() : 0)).toISOString();
     const sealed = sealEntry(
       { tenantId, seqNo: String(BigInt(head?.seq_no ?? "0") + 1n), ts, ...entry },
       head?.entry_hash ?? GENESIS_HASH,
@@ -78,8 +81,11 @@ export class AuditService {
   maxEntries = 100_000;
 
   /** The entries of the tenant (all, or one UTC day) plus the entry just before the first one. */
-  private async load(tenantId: string, day?: { start: Date; end: Date }): Promise<{ entries: ChainEntry[]; previous: ChainEntry | undefined }> {
+  private async load(tenantId: string, day?: { start: Date; end: Date }, lock = false): Promise<{ entries: ChainEntry[]; previous: ChainEntry | undefined }> {
     return this.db.inScope({ tenantId }, async (c) => {
+      // Waits for every append that is still in flight to finish (an append holds this lock until it commits), so an entry stamped inside
+      // the day but committed after the read began cannot be missed. Appends that start after this are stamped at or after the read.
+      if (lock) await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const counted =
         day === undefined
           ? await c.query<{ n: number }>("SELECT count(*)::int AS n FROM consent_audit_log")
@@ -134,13 +140,17 @@ export class AuditService {
     return (await this.load(tenantId, utcDay(date))).entries;
   }
 
-  /** The anchor for one UTC day, or null if there were no entries. A chain that does not verify gives no anchor. */
-  async anchor(tenantId: string, date: string): Promise<{ anchor: Anchor } | { failure: ChainFailure; seqNo: string } | null> {
+  /**
+   * The anchor for one UTC day, or null if there were no entries. A chain that does not verify gives no anchor. `startPrevHash` is
+   * what the day's first entry says came before it, for checking the day against the anchor of an earlier day. `lock` makes the read
+   * wait for appends that are still in flight, which the nightly job needs and a request does not.
+   */
+  async anchor(tenantId: string, date: string, opts: { lock?: boolean } = {}): Promise<{ anchor: Anchor; startPrevHash: string } | { failure: ChainFailure; seqNo: string } | null> {
     const day = utcDay(date);
-    const { entries, previous } = await this.load(tenantId, day);
+    const { entries, previous } = await this.load(tenantId, day, opts.lock === true);
     if (entries.length === 0) return null;
     const result = this.check(entries, previous);
     if (!result.ok) return { failure: result.failure, seqNo: result.seqNo };
-    return { anchor: buildAnchor(tenantId, day.label, entries) };
+    return { anchor: buildAnchor(tenantId, day.label, entries), startPrevHash: (entries[0] as ChainEntry).prevHash };
   }
 }

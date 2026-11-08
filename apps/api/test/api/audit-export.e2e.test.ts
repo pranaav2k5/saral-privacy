@@ -3,8 +3,12 @@ import { AuditService } from "../../src/audit/audit.service.js";
 import { startApi, type Api } from "./harness.js";
 
 let api: Api;
+/** Entry times come from a fixed clock, so a test that runs across midnight still finds its entries on the day it asks for. */
+const DAY = "2026-11-06";
+const AT = Date.parse(`${DAY}T10:00:00Z`);
 beforeAll(async () => {
   api = await startApi();
+  api.app.get(AuditService).now = () => AT;
   for (let i = 0; i < 4; i++) await api.grant(api.A, { identifier: `+91960000010${String(i)}` });
   await api.grant(api.B);
 });
@@ -12,7 +16,7 @@ afterAll(async () => {
   await api.stop();
 });
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => DAY;
 const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
 const entries = (token: string, query = `?date=${today()}`) => api.http().get(`/v1/audit/entries${query}`).set(bearer(token));
 

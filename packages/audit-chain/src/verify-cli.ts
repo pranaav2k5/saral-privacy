@@ -52,6 +52,13 @@ function readJson(path: string, max: number, label: string): unknown {
   }
 }
 
+/** `YYYY-MM-DD` that is a real calendar day. */
+function isRealDay(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function parseAnchor(raw: unknown, label: string): Anchor {
@@ -59,6 +66,8 @@ function parseAnchor(raw: unknown, label: string): Anchor {
   const need: [string, "string" | "number"][] = [["version", "number"], ["tenantId", "string"], ["date", "string"], ["count", "number"], ["firstSeqNo", "string"], ["lastSeqNo", "string"], ["headHash", "string"], ["merkleRoot", "string"]];
   for (const [name, type] of need) if (typeof raw[name] !== type) throw new Refused(`${label} has no ${name} (or it is not a ${type}).`);
   if (raw.version !== 1) throw new Refused(`${label} uses version ${String(raw.version)}, which this tool does not know.`);
+  const date = raw.date as string;
+  if (!isRealDay(date)) throw new Refused(`${label}: the date is not a real day (it must be YYYY-MM-DD).`);
   if (!/^[0-9]{1,30}$/.test(raw.firstSeqNo as string) || !/^[0-9]{1,30}$/.test(raw.lastSeqNo as string)) throw new Refused(`${label} has a sequence number that is not digits.`);
   return raw as unknown as Anchor;
 }
@@ -165,6 +174,8 @@ export async function runVerifier(argv: readonly string[], io: Io): Promise<numb
       if (prev.tenantId !== anchor.tenantId || BigInt(prev.lastSeqNo) + 1n !== BigInt(anchor.firstSeqNo)) {
         throw new Refused("the previous anchor does not lead into this one (it must be for the same organisation and end at the entry just before this one's first).");
       }
+      // Days with no entries have no anchor, so there may be a gap, but the day before can never be this day or a later one.
+      if (prev.date >= anchor.date) throw new Refused(`the previous anchor (${prev.date}) must be for an earlier day than this one (${anchor.date}).`);
       startPrevHash = prev.headHash;
       startSeqNo = prev.lastSeqNo;
       previousDate = prev.date;

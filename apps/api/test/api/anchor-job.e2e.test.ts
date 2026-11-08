@@ -1,8 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { anchorBody, buildAnchor, type Anchor, type ChainEntry } from "@saral/audit-chain";
 import { AnchorJob } from "../../src/audit/anchor-job.js";
+import { AuditService } from "../../src/audit/audit.service.js";
+import { Database } from "../../src/db/database.js";
 import { FileObjectStore, anchorKey, type ObjectStore } from "../../src/audit/object-store.js";
 import { startApi, type Api } from "./harness.js";
 
@@ -12,6 +15,7 @@ let dir: string;
 beforeAll(async () => {
   api = await startApi();
   job = api.app.get(AnchorJob);
+  api.app.get(AuditService).now = () => AT;
   for (let i = 0; i < 3; i++) await api.grant(api.A, { identifier: `+91970000020${String(i)}` });
   await api.grant(api.B);
 });
@@ -26,9 +30,14 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const TODAY = new Date().toISOString().slice(0, 10);
-/** The day after, so that the day being anchored is over. */
-const TOMORROW = new Date(Date.parse(`${TODAY}T00:00:00Z`) + 86_400_000 + 3_600_000);
+// Entry times come from a fixed clock (set in beforeAll), so a run that crosses midnight still finds its entries on the day it anchors.
+const DAY_MS = 86_400_000;
+const AT = Date.parse("2026-11-06T10:00:00Z");
+const TODAY = "2026-11-06";
+const dayOf = (offset: number) => new Date(Date.parse(`${TODAY}T00:00:00Z`) + offset * DAY_MS).toISOString().slice(0, 10);
+/** An hour after the end of the day `offset` days from TODAY, so that the day being anchored is over. */
+const after = (offset: number) => new Date(Date.parse(`${TODAY}T00:00:00Z`) + (offset + 1) * DAY_MS + 3_600_000);
+const TOMORROW = after(0);
 const fileOf = (tenantId: string, date = TODAY) => join(dir, anchorKey(tenantId, date));
 const entriesOf = async (tenantId: string) =>
   (await api.db.owner.query("SELECT * FROM consent_audit_log WHERE tenant_id = $1 ORDER BY seq_no", [tenantId])).rows.map((r: Record<string, unknown>) => ({
@@ -85,6 +94,7 @@ describe("the nightly anchor job", () => {
     const real = new FileObjectStore(dir);
     const flaky: ObjectStore = {
       get: (k) => real.get(k),
+      list: (p) => real.list(p),
       putIfAbsent: (k, body) => (k.includes(api.B.id) ? Promise.reject(new Error("the disk is full")) : real.putIfAbsent(k, body)),
     };
     const report = await job.run({ date: TODAY, store: flaky, now: TOMORROW });
@@ -113,8 +123,103 @@ describe("the nightly anchor job", () => {
     expect(verifyLinksAgainstAnchor(await entriesOf(api.B.id), anchor).ok).toBe(true);
   });
 
+  test("waits for an append that is still in flight, so an entry stamped inside the day but committed after midnight is in the anchor", async () => {
+    const audit = api.app.get(AuditService);
+    const db = api.app.get(Database);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let began!: () => void;
+    const holding = new Promise<void>((r) => (began = r));
+    const appending = db.inScope({ tenantId: api.A.id }, async (c) => {
+      await audit.append(c, api.A.id, { actorType: "system", actorId: "test", action: "consent.granted", refTable: "consent_records", refId: randomUUID(), payloadSha256: "a".repeat(64) });
+      began();
+      await gate;
+    });
+    await holding;
+    let finished = false;
+    const running = job.run({ date: TODAY, store: new FileObjectStore(dir), now: TOMORROW }).then((r) => {
+      finished = true;
+      return r;
+    });
+    try {
+      await new Promise((r) => setTimeout(r, 500));
+      expect(finished).toBe(false);
+    } finally {
+      // Always let the append finish, so a failed check cannot leave a transaction open and hang the rest of the run.
+      release();
+    }
+    await appending;
+    const report = await running;
+    expect(report.failures).toEqual([]);
+    expect(JSON.parse(readFileSync(fileOf(api.A.id), "utf8"))).toMatchObject({ count: 4, lastSeqNo: "4" });
+  });
+
+  test("an anchored day whose entries have all gone is a conflict, not a day with nothing to anchor", async () => {
+    const store = new FileObjectStore(dir);
+    await job.run({ date: TODAY, store, now: TOMORROW });
+    expect(readFileSync(fileOf(api.B.id), "utf8")).toContain(api.B.id);
+    await api.db.owner.query("ALTER TABLE consent_audit_log DISABLE TRIGGER audit_no_update_delete");
+    try {
+      await api.db.owner.query("DELETE FROM consent_audit_log WHERE tenant_id = $1", [api.B.id]);
+    } finally {
+      await api.db.owner.query("ALTER TABLE consent_audit_log ENABLE TRIGGER audit_no_update_delete");
+    }
+    const report = await job.run({ date: TODAY, store, now: TOMORROW });
+    expect(report.failures).toContainEqual({ tenantId: api.B.id, kind: "anchor_conflict" });
+    expect(report.skipped).toBe(0);
+  });
+
+  test("each day is checked against the anchor before it: empty days between are fine, a removed tail that later entries paper over is not", async () => {
+    const audit = api.app.get(AuditService);
+    const store = new FileObjectStore(dir);
+    await job.run({ date: TODAY, store, now: TOMORROW });
+    // Two days later, with an empty day between: it continues from the stored anchor, so it is anchored.
+    audit.now = () => AT + 2 * DAY_MS;
+    await api.grant(api.A, { identifier: "+919700000301" });
+    const ok = await job.run({ date: dayOf(2), store, now: after(2) });
+    expect(ok.failures).toEqual([]);
+    expect(readFileSync(fileOf(api.A.id, dayOf(2)), "utf8")).toContain(`"date":"${dayOf(2)}"`);
+    // An anchored entry is removed from the end, and new entries follow from what is left: the chain still verifies, the anchor does not agree.
+    await api.db.owner.query("ALTER TABLE consent_audit_log DISABLE TRIGGER audit_no_update_delete");
+    try {
+      await api.db.owner.query("DELETE FROM consent_audit_log WHERE tenant_id = $1 AND ts >= $2", [api.A.id, new Date(AT + 2 * DAY_MS)]);
+    } finally {
+      await api.db.owner.query("ALTER TABLE consent_audit_log ENABLE TRIGGER audit_no_update_delete");
+    }
+    audit.now = () => AT + 3 * DAY_MS;
+    await api.grant(api.A, { identifier: "+919700000302" });
+    const bad = await job.run({ date: dayOf(3), store, now: after(3) });
+    expect(bad.failures).toContainEqual({ tenantId: api.A.id, kind: "broken_link", previousDate: dayOf(2) });
+    expect(() => readFileSync(fileOf(api.A.id, dayOf(3)))).toThrow();
+    expect((await api.http().get("/v1/audit/verify").set("Authorization", `Bearer ${api.A.auditor}`)).body.ok).toBe(true);
+  });
+
+  test("the number the earlier anchor ends at must be the one before the day's first, even when the hash fits", async () => {
+    const store = new FileObjectStore(dir);
+    await job.run({ date: TODAY, store, now: TOMORROW });
+    const stored = JSON.parse(readFileSync(fileOf(api.A.id), "utf8")) as Anchor;
+    rmSync(fileOf(api.A.id), { force: true });
+    writeFileSync(fileOf(api.A.id), anchorBody({ ...stored, lastSeqNo: "9" }));
+    const report = await job.run({ date: dayOf(3), store, now: after(3) });
+    expect(report.failures).toContainEqual({ tenantId: api.A.id, kind: "broken_link", previousDate: TODAY });
+  });
+
+  test("an anchor before it that cannot be read stops the new one from being written, and says so", async () => {
+    const audit = api.app.get(AuditService);
+    audit.now = () => AT + 5 * DAY_MS;
+    await api.grant(api.A, { identifier: "+919700000303" });
+    mkdirSync(join(dir, "anchors", api.A.id), { recursive: true });
+    writeFileSync(fileOf(api.A.id, dayOf(1)), "this is not an anchor");
+    const report = await job.run({ date: dayOf(5), store: new FileObjectStore(dir), now: after(5) });
+    expect(report.failures.find((f) => f.tenantId === api.A.id)).toMatchObject({ kind: "store_error", message: expect.stringMatching(/could not be read/) });
+    expect(() => readFileSync(fileOf(api.A.id, dayOf(5)))).toThrow();
+  });
+
   // Last, because it leaves the first organisation's chain broken for the rest of this file.
   test("a chain that does not verify gets no anchor and is reported with the entry that failed, while the others are anchored", async () => {
+    // The earlier tests removed the second organisation's entries, so it gets a new one on the first day, where the first organisation's change is made.
+    api.app.get(AuditService).now = () => AT;
+    await api.grant(api.B, { identifier: "+919700000304" });
     await api.db.owner.query("ALTER TABLE consent_audit_log DISABLE TRIGGER audit_no_update_delete");
     try {
       await api.db.owner.query("UPDATE consent_audit_log SET action = 'consent.withdrawn' WHERE tenant_id = $1 AND seq_no = 2", [api.A.id]);

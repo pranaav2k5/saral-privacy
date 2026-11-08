@@ -90,6 +90,37 @@ describe("with the day before", () => {
   });
 
   test.each([
+    ["the same day", "2026-11-06"],
+    ["a later day", "2026-11-07"],
+  ])("a previous anchor dated %s is refused, though its numbers and hash fit", async (_n, date) => {
+    const f = files(day2, anchor2);
+    const prev = write("prev.json", anchorBody({ ...anchor1, date }));
+    const r = await run(["--anchor", f.anchor, "--entries", f.entries, "--previous-anchor", prev]);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("must be for an earlier day");
+  });
+
+  test("a day or more between the two anchors is fine, because a day with no entries has no anchor", async () => {
+    const f = files(day2, anchor2);
+    const prev = write("prev.json", anchorBody({ ...anchor1, date: "2026-10-01" }));
+    const r = await run(["--anchor", f.anchor, "--entries", f.entries, "--previous-anchor", prev]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("anchor for 2026-10-01");
+  });
+
+  test.each([
+    ["the anchor", "anchor.json"],
+    ["the previous anchor", "prev.json"],
+  ])("a date label that is not a day in %s is refused", async (_n, which) => {
+    const f = files(day2, anchor2);
+    const prev = write("prev.json", anchorBody(anchor1));
+    write(which, anchorBody({ ...(which === "prev.json" ? anchor1 : anchor2), date: "2026-13-45" }));
+    const r = await run(["--anchor", f.anchor, "--entries", f.entries, "--previous-anchor", prev]);
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("date is not a real day");
+  });
+
+  test.each([
     ["another organisation", (a: Anchor) => ({ ...a, tenantId: "99999999-9999-4999-8999-999999999999" })],
     ["a day that does not end where this one starts", (a: Anchor) => ({ ...a, lastSeqNo: "3" })],
   ])("a previous anchor from %s is refused before anything is checked", async (_n, change) => {

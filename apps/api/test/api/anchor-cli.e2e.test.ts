@@ -2,12 +2,17 @@ import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAnchor } from "../../src/audit/anchor-cli.js";
+import { AuditService } from "../../src/audit/audit.service.js";
 import { MASTER, startApi, type Api } from "./harness.js";
 
 let api: Api;
 let dir: string;
+// Entry times come from a fixed clock, so a run that crosses midnight still finds its entries on the day it anchors.
+const TODAY = "2026-11-06";
+const AT = Date.parse(`${TODAY}T10:00:00Z`);
 beforeAll(async () => {
   api = await startApi();
+  api.app.get(AuditService).now = () => AT;
   await api.grant(api.A);
 });
 afterAll(async () => {
@@ -20,7 +25,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const TODAY = new Date().toISOString().slice(0, 10);
 const env = (over: Record<string, string | undefined> = {}) => ({ DATABASE_URL: api.db.url, SARAL_DEV_MASTER_SECRET: MASTER, NODE_ENV: "test", ANCHOR_DIR: dir, ...over });
 async function anchor(args: string[], e: NodeJS.ProcessEnv = env(), now = new Date(Date.parse(`${TODAY}T00:00:00Z`) + 86_400_000 + 600_000)) {
   const out: string[] = [];
@@ -71,6 +75,8 @@ describe("the anchor command", () => {
     ["an unknown flag", ["--dat", "2026-01-01"]],
     ["a flag with no value", ["--date"]],
     ["a bad date", ["--date", "yesterday"]],
+    ["a date that is not a day on the calendar", ["--date", "2026-02-30"]],
+    ["a month that does not exist", ["--date", "2026-13-01"]],
     ["a date given twice", ["--date", "2026-01-01", "--date", "2026-01-02"]],
     ["a stray word", ["now"]],
   ])("%s prints the usage and exits with 2", async (_n, args) => {

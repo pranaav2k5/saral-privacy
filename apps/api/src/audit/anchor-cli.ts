@@ -23,9 +23,16 @@ Exit code: 0 done, 1 something could not be anchored, 2 bad usage or settings.`;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** `YYYY-MM-DD` that is a real day on the calendar. */
+function isRealDay(value: string): boolean {
+  if (!DATE.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
 function parse(argv: readonly string[]): { date?: string } | null {
   if (argv.length === 0) return {};
-  if (argv.length !== 2 || argv[0] !== "--date" || !DATE.test(argv[1] as string)) return null;
+  if (argv.length !== 2 || argv[0] !== "--date" || !isRealDay(argv[1] as string)) return null;
   return { date: argv[1] as string };
 }
 
@@ -33,6 +40,8 @@ function describe(f: AnchorFailure, date: string): string {
   switch (f.kind) {
     case "anchor_conflict":
       return `Organisation ${f.tenantId}: the store already holds a different anchor for ${date}. It was not replaced. Treat this as possible tampering, and investigate.`;
+    case "broken_link":
+      return `Organisation ${f.tenantId}: the entries for ${date} do not continue from the anchor of ${f.previousDate}, so entries were removed or changed after that anchor. No anchor was written.`;
     case "chain_invalid":
       return `Organisation ${f.tenantId}: the audit chain does not verify (${f.failure} at entry ${f.seqNo}), so no anchor was written.`;
     case "read_error":
