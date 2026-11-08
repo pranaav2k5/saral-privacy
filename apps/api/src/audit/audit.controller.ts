@@ -13,6 +13,13 @@ export class AuditController {
     return this.audit.verify(auth.tenantId, date);
   }
 
+  /** One UTC day of the tenant's audit entries, for checking against that day's anchor (outside Saral, with `saral-audit-verify`). */
+  @Get("entries")
+  @Scopes("auditor")
+  entries(@Auth() auth: AuthContext, @Query("date") date?: string) {
+    return this.audit.entries(auth.tenantId, date as string);
+  }
+
   /** The anchor (count, head hash and Merkle root) for one UTC day. */
   @Get("merkle-root")
   @Scopes("auditor")

@@ -126,6 +126,14 @@ export class AuditService {
     };
   }
 
+  /**
+   * One UTC day of the tenant's entries, as stored (hashes and ids, no personal data), for an outside auditor to check against that
+   * day's anchor. An empty day is an empty list. A day over the limit is refused, as verifying it is.
+   */
+  async entries(tenantId: string, date: string): Promise<ChainEntry[]> {
+    return (await this.load(tenantId, utcDay(date))).entries;
+  }
+
   /** The anchor for one UTC day, or null if there were no entries. A chain that does not verify gives no anchor. */
   async anchor(tenantId: string, date: string): Promise<{ anchor: Anchor } | { failure: ChainFailure; seqNo: string } | null> {
     const day = utcDay(date);

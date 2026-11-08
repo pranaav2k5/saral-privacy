@@ -76,6 +76,23 @@ export class Database implements OnModuleDestroy {
     }
   }
 
+  /** Runs `fn` as the anchor role, which can list the organisations (their ids) and read nothing else. */
+  async asAnchor<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.getPool().connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE saral_anchor");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.pool?.end();
   }
