@@ -33,7 +33,7 @@ The incident record, which can describe people and what happened to their data; 
 - The hashes in a sign-off prove that the drafts were the ones the client had loaded, not that the officer read them; a client could send the hashes without showing the text. The dashboard shows the text before it offers the button.
 - That the Board or the people were told is the officer's statement with the Board's reference. Saral has no connection to the Board's channel and cannot prove it. The audit entry proves who recorded it and when.
 - The time it was found is typed by a person. Backdating or forward-dating is limited by the audit trail of corrections and by `reportedAt`, not prevented.
-- There are no reminders before the deadline, no alert on the overview, and no email. An officer who does not open the page sees nothing. This should be built before a pilot.
+- The overview of the officer and of the administrator warns of a breach not yet reported to the Board that is past the deadline or due within 24 hours (`BreachAlert`), but only when someone opens the dashboard: there is no email or push reminder, so a person who does not open it sees nothing. A reminder that reaches the person should be built before a pilot.
 - The free text of an incident can mention people. It is limited in size and kept out of audit entries and webhooks, but it is stored and shown to the officer and the administrator.
 - Nothing exports an incident or the drafts as a document yet (the plan names PDF).
 
