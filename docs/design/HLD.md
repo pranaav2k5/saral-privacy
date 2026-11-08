@@ -53,6 +53,7 @@ flowchart LR
 | Notice engine | `packages/notice` | yes | Validated input, English and Hindi templates, canonical text and SHA-256. |
 | Consent SDK | `packages/sdk-js` | yes | Dialog, requests, local decision state. 6 kB gzipped. |
 | Notice generator | `apps/site` | yes | Free tool at `/notice-generator`. No network requests, nothing stored. |
+| Receipt verifier | `apps/site` | yes | Public page at `/verify`. A person pastes a consent receipt and the browser checks the RS256 signature against the key set the API publishes at `/.well-known/jwks.json`. The only request is that key fetch; the receipt never leaves the page. |
 | API | `apps/api` | yes | Auth by API key and scope, consent, receipts, audit verification, webhooks, public JWKS and notices. |
 | Database | `apps/api/db/migrations` | yes | Tenancy boundary, immutability rules, outbox. |
 | Webhook worker | `apps/api/src/webhooks` | yes | Delivery with retries; runs in the API process when `SARAL_WEBHOOK_WORKER=on`. |
