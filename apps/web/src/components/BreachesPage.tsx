@@ -75,7 +75,7 @@ function Detail({ breach, onClose, refresh }: { breach: Breach; onClose: () => v
   const [told, setTold] = useState({ how: "", count: "" });
   const [note, setNote] = useState("");
 
-  async function act(work: () => Promise<unknown>, after?: () => void): Promise<void> {
+  async function act(work: () => Promise<unknown>, after?: () => void, onFail?: () => void): Promise<void> {
     if (busy) return;
     setBusy(true);
     setProblems(null);
@@ -86,6 +86,7 @@ function Detail({ breach, onClose, refresh }: { breach: Breach; onClose: () => v
       refresh();
     } catch (e) {
       setProblems(problemsFromBreachError(e));
+      onFail?.();
     } finally {
       setBusy(false);
     }
@@ -196,7 +197,19 @@ function Detail({ breach, onClose, refresh }: { breach: Breach; onClose: () => v
       {isDpo && breach.state === "reported" && (
         <div className="flex flex-col items-start gap-2">
           <p>Signing off records that you have read the drafts and that the facts are right. The report can no longer be corrected after that.</p>
-          <Button type="button" disabled={busy} onClick={() => void act(() => api.signOffBreach(breach.id))}>Sign off the drafts</Button>
+          {drafts.status !== "ready" && <p className="text-ink-soft">The sign-off is for the drafts you have read, so it waits until they are on screen.</p>}
+          <Button
+            type="button"
+            disabled={busy || drafts.status !== "ready"}
+            onClick={() => {
+              if (drafts.status !== "ready") return;
+              const seen = { boardSha256: drafts.data.boardSha256, principalSha256: drafts.data.principalSha256 };
+              // If the refusal is that the drafts changed, read the new ones, so the officer can see what is different before signing again.
+              void act(() => api.signOffBreach(breach.id, seen), undefined, () => { drafts.refresh(); refresh(); });
+            }}
+          >
+            Sign off the drafts
+          </Button>
         </div>
       )}
 

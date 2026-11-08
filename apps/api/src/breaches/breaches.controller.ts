@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post } from "@nestjs/common";
 import { Auth, Scopes, type AuthContext } from "../auth/access.js";
 import { objectBody, uuidParam } from "../http/validate.js";
-import { parseBoardNotified, parseClose, parsePatch, parsePrincipals, parseReport } from "./breach-input.js";
+import { parseBoardNotified, parseClose, parsePatch, parsePrincipals, parseReport, parseSignOff } from "./breach-input.js";
 import { BreachService } from "./breach.service.js";
 
 /**
@@ -45,8 +45,8 @@ export class BreachesController {
   @Post(":id/sign-off")
   @HttpCode(200)
   @Scopes("dpo")
-  signOff(@Auth() auth: AuthContext, @Param("id") id: string) {
-    return this.breaches.signOff(auth.tenantId, auth, uuidParam(id, "id"));
+  signOff(@Auth() auth: AuthContext, @Param("id") id: string, @Body() raw: unknown) {
+    return this.breaches.signOff(auth.tenantId, auth, uuidParam(id, "id"), parseSignOff(objectBody(raw)));
   }
 
   @Post(":id/board-notified")

@@ -121,3 +121,13 @@ export function parseClose(body: Record<string, unknown>): { note: string } {
   onlyKeys(body, ["note"]);
   return { note: text(body.note, "note", 2000) };
 }
+
+/** What a sign-off carries: the hashes of the two drafts as the officer was shown them. */
+export function parseSignOff(body: Record<string, unknown>): { boardSha256: string; principalSha256: string } {
+  onlyKeys(body, ["boardSha256", "principalSha256"]);
+  const hash = (v: unknown, field: string): string => {
+    if (typeof v !== "string" || !/^[0-9a-f]{64}$/.test(v)) throw bad(field, "must be the 64 hexadecimal characters (lowercase) that came with the draft you read");
+    return v;
+  };
+  return { boardSha256: hash(body.boardSha256, "boardSha256"), principalSha256: hash(body.principalSha256, "principalSha256") };
+}

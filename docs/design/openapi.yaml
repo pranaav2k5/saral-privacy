@@ -592,11 +592,16 @@ paths:
       operationId: signOffBreach
       summary: The officer signs off the drafts
       description: >-
-        The officer's word. Records who and when, and the hash of exactly the two drafts as they were (so it can be shown later what was signed), and the incident can no longer be changed. Officer only. An audit event. Once: 409 `illegal_transition` otherwise.
+        The officer's word, given for exactly the drafts they read: the body carries the two hashes that came with the drafts, and if the drafts are now different (the report was corrected after they were opened) the answer is 409 `drafts_changed` and nothing is signed. Otherwise it records who and when, and the hash of the two drafts (so it can be shown later what was signed), and the incident can no longer be changed. Officer only. An audit event. Once: 409 `illegal_transition` otherwise.
       x-scopes: [dpo]
       security: [{ apiKey: [] }]
       parameters:
         - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachSignOff" }
       responses:
         "200":
           description: The incident.
@@ -608,7 +613,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: "`illegal_transition`."
+          description: "`illegal_transition`, or `drafts_changed`."
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1366,13 +1371,22 @@ components:
       required: [note]
       properties:
         note: { type: string, minLength: 1, maxLength: 2000 }
+    BreachSignOff:
+      type: object
+      additionalProperties: false
+      required: [boardSha256, principalSha256]
+      properties:
+        boardSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: The `boardSha256` that came with the drafts the officer read. }
+        principalSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: The `principalSha256` that came with the drafts the officer read. }
     BreachDrafts:
       type: object
-      required: [boardNotification, principalNotice, boardDeadline]
+      required: [boardNotification, principalNotice, boardDeadline, boardSha256, principalSha256]
       properties:
         boardNotification: { type: string }
         principalNotice: { type: string }
         boardDeadline: { type: string, format: date-time }
+        boardSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: SHA-256 of `boardNotification`. A sign-off must carry it. }
+        principalSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: SHA-256 of `principalNotice`. A sign-off must carry it. }
     Breach:
       type: object
       required: [id, state, title, description, discoveredAt, occurredAt, nature, dataCategories, approxPrincipalsAffected, likelyConsequences, measuresTaken, reportedAt, reportedBy, boardDeadline, boardOverdue, boardNotifiedLate, signedOffAt, signedOffBy, boardNotifiedAt, boardReference, principalsNotifiedAt, principalsHow, principalsCount, closedAt, closingNote]

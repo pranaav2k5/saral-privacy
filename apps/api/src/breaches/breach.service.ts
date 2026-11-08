@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import { sha256Hex } from "@saral/audit-chain";
+import { hashesEqual, sha256Hex } from "@saral/audit-chain";
 import type pg from "pg";
 import { AuditService } from "../audit/audit.service.js";
 import type { AuthContext } from "../auth/access.js";
@@ -48,6 +48,15 @@ export interface BreachView {
   principalsCount: number | null;
   closedAt: string | null;
   closingNote: string | null;
+}
+
+/** The two drafts, and the hashes a sign-off must carry to show it is for exactly these texts. */
+export interface BreachDrafts {
+  boardNotification: string;
+  principalNotice: string;
+  boardDeadline: string;
+  boardSha256: string;
+  principalSha256: string;
 }
 
 const iso = (d: Date | null): string | null => (d === null ? null : d.toISOString());
@@ -116,9 +125,11 @@ export class BreachService {
     return { name: ctl.piiController, contact: ctl.contact, email: ctl.email, address: street };
   }
 
-  private drafts(r: Row, org: Organisation): { boardNotification: string; principalNotice: string; boardDeadline: string } {
+  private drafts(r: Row, org: Organisation): BreachDrafts {
     const deadline = boardDeadline(r.discovered_at).toISOString();
-    return { boardNotification: renderBoardNotification(facts(r), org, deadline), principalNotice: renderPrincipalNotice(facts(r), org), boardDeadline: deadline };
+    const boardNotification = renderBoardNotification(facts(r), org, deadline);
+    const principalNotice = renderPrincipalNotice(facts(r), org);
+    return { boardNotification, principalNotice, boardDeadline: deadline, boardSha256: sha256Hex(boardNotification), principalSha256: sha256Hex(principalNotice) };
   }
 
   private illegal(from: BreachState, to: BreachState): ConflictException {
@@ -174,20 +185,27 @@ export class BreachService {
     });
   }
 
-  async getDrafts(tenantId: string, id: string): Promise<{ boardNotification: string; principalNotice: string; boardDeadline: string }> {
+  async getDrafts(tenantId: string, id: string): Promise<BreachDrafts> {
     return this.db.inScope({ tenantId }, async (c) => this.drafts(await this.load(c, id, false), await this.organisation(c)));
   }
 
-  /** The officer signs off the drafts. What the drafts said is kept as two hashes, and the incident can no longer be changed. */
-  async signOff(tenantId: string, auth: AuthContext, id: string): Promise<BreachView> {
+  /**
+   * The officer signs off the drafts. The sign-off carries the hashes of the drafts the officer was shown, and is refused if the drafts are
+   * now different (someone corrected the report in between), so the officer's word is never given to text they did not read. What the
+   * drafts said is kept as the two hashes, and the incident can no longer be changed.
+   */
+  async signOff(tenantId: string, auth: AuthContext, id: string, seen: { boardSha256: string; principalSha256: string }): Promise<BreachView> {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const row = await this.load(c, id, true);
       if (!canTransition(row.state, "signed_off")) throw this.illegal(row.state, "signed_off");
       const d = this.drafts(row, await this.organisation(c));
+      if (!hashesEqual(seen.boardSha256, d.boardSha256) || !hashesEqual(seen.principalSha256, d.principalSha256)) {
+        throw new ConflictException({ error: "drafts_changed", message: "the drafts are not the ones you read: the report was changed after you opened them. Read them again, then sign off again" });
+      }
       const updated = (await c.query<Row>(
         `UPDATE breach_incidents SET state = 'signed_off', signed_off_at = now(), signed_off_by = $2, signed_off_board_sha256 = $3, signed_off_principal_sha256 = $4 WHERE id = $1 RETURNING *`,
-        [id, auth.actor, sha256Hex(d.boardNotification), sha256Hex(d.principalNotice)],
+        [id, auth.actor, d.boardSha256, d.principalSha256],
       )).rows[0] as Row;
       await this.record(c, auth, updated, "breach.signed_off");
       return view(updated);

@@ -114,6 +114,9 @@ export interface BreachDrafts {
   boardNotification: string;
   principalNotice: string;
   boardDeadline: string;
+  /** SHA-256 of each draft. A sign-off carries them, so it is given for exactly the text that was read. */
+  boardSha256: string;
+  principalSha256: string;
 }
 
 export interface NoticeSummary {
@@ -233,7 +236,7 @@ export class ApiClient {
   reportBreach = (r: BreachRequest) => this.request<Breach>("POST", "/v1/breaches", r);
   updateBreach = (id: string, patch: BreachPatch) => this.request<Breach>("PATCH", `/v1/breaches/${encodeURIComponent(id)}`, patch);
   breachDrafts = (id: string) => this.request<BreachDrafts>("GET", `/v1/breaches/${encodeURIComponent(id)}/drafts`);
-  signOffBreach = (id: string) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/sign-off`);
+  signOffBreach = (id: string, seen: { boardSha256: string; principalSha256: string }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/sign-off`, seen);
   recordBoardNotified = (id: string, body: { notifiedAt: string; reference: string }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/board-notified`, body);
   recordPrincipalsNotified = (id: string, body: { how: string; count: number }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/principals-notified`, body);
   closeBreach = (id: string, note: string) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/close`, { note });

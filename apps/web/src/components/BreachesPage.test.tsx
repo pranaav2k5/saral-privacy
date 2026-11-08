@@ -19,7 +19,8 @@ const box = (iso: string): string => {
 const SIGNED = { state: "signed_off" as const, signedOffAt: "2026-11-06T10:00:00.000Z", signedOffBy: "staff:dpo" };
 const BOARDED = { ...SIGNED, state: "board_notified" as const, boardNotifiedAt: "2026-11-06T11:00:00.000Z", boardReference: "DPB-1", boardNotifiedLate: false };
 const TOLD = { principalsNotifiedAt: "2026-11-06T12:00:00.000Z", principalsHow: "Email to each person", principalsCount: 120 };
-const DRAFTS = { boardNotification: "DRAFT: for the Board.\nOrganisation: Example", principalNotice: "DRAFT: for the people.\nSubject: A security incident", boardDeadline: "2099-11-09T09:00:00.000Z" };
+const HASHES = { boardSha256: "a".repeat(64), principalSha256: "b".repeat(64) };
+const DRAFTS = { boardNotification: "DRAFT: for the Board.\nOrganisation: Example", principalNotice: "DRAFT: for the people.\nSubject: A security incident", boardDeadline: "2099-11-09T09:00:00.000Z", ...HASHES };
 
 const page = (list: Breach[], routes: Record<string, Route | Route[]> = {}, role: "dpo" | "tenant_admin" = "dpo") =>
   renderScreen(<BreachesPage />, { role, routes: { "GET /v1/breaches": { body: list }, "GET /v1/breaches/b1/drafts": { body: DRAFTS }, ...routes } });
@@ -200,9 +201,11 @@ describe("what each person may do", () => {
   test("the officer signs off, which sends the sign-off and shows the incident signed off", async () => {
     const v = page([breach()], { "POST /v1/breaches/b1/sign-off": { body: breach(SIGNED) }, "GET /v1/breaches": [{ body: [breach()] }, { body: [breach(SIGNED)] }] });
     const region = await open();
+    await within(region).findByText(/DRAFT: for the Board\./);
     fireEvent.click(within(region).getByRole("button", { name: "Sign off the drafts" }));
     await waitFor(() => expect(within(screen.getByRole("region", { name: "Laptop lost" })).queryByRole("button", { name: "Sign off the drafts" })).toBeNull());
     expect(v.callsTo("POST", "/v1/breaches/b1/sign-off")).toHaveLength(1);
+    expect(v.callsTo("POST", "/v1/breaches/b1/sign-off")[0]?.body).toEqual(HASHES);
     expect(screen.getByRole("region", { name: "Laptop lost" }).textContent).toContain("Signed off");
   });
 
@@ -211,12 +214,41 @@ describe("what each person may do", () => {
     const gate = new Promise<void>((r) => (release = r));
     const v = page([breach()], { "POST /v1/breaches/b1/sign-off": { body: breach(SIGNED), wait: gate } });
     const region = await open();
+    await within(region).findByText(/DRAFT: for the Board\./);
     const button = within(region).getByRole("button", { name: "Sign off the drafts" });
     fireEvent.click(button);
     fireEvent.click(button);
     expect((within(region).getByRole("button", { name: "Sign off the drafts" }) as HTMLButtonElement).disabled).toBe(true);
     release();
     await waitFor(() => expect(v.callsTo("POST", "/v1/breaches/b1/sign-off")).toHaveLength(1));
+  });
+
+  test("the sign-off waits until the drafts are on screen, because it is given for the drafts that were read", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const v = page([breach()], { "GET /v1/breaches/b1/drafts": { body: DRAFTS, wait: gate } });
+    const region = await open();
+    const button = within(region).getByRole("button", { name: "Sign off the drafts" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(v.callsTo("POST", "/v1/breaches/b1/sign-off")).toHaveLength(0);
+    release();
+    await waitFor(() => expect((within(region).getByRole("button", { name: "Sign off the drafts" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  test("when the drafts have changed since they were opened the refusal is shown and the new drafts are read again, not signed", async () => {
+    const newer = { ...DRAFTS, boardNotification: "DRAFT: for the Board.\nA changed account.", boardSha256: "c".repeat(64) };
+    const v = page([breach()], {
+      "GET /v1/breaches/b1/drafts": [{ body: DRAFTS }, { body: newer }],
+      "POST /v1/breaches/b1/sign-off": { status: 409, body: { error: "drafts_changed", message: "the drafts are not the ones you read: the report was changed after you opened them. Read them again, then sign off again" } },
+    });
+    const region = await open();
+    await within(region).findByText(/DRAFT: for the Board\./);
+    fireEvent.click(within(region).getByRole("button", { name: "Sign off the drafts" }));
+    expect((await within(region).findByText(/not the ones you read/)).closest("[role=alert]")).toBeTruthy();
+    expect(await within(region).findByText(/A changed account\./)).toBeTruthy();
+    expect(v.callsTo("GET", "/v1/breaches/b1/drafts")).toHaveLength(2);
+    expect(within(region).getByRole("button", { name: "Sign off the drafts" })).toBeTruthy();
   });
 
   test("an administrator can report and correct but not sign off, tell the Board or close, and is told why", async () => {
@@ -238,6 +270,7 @@ describe("what each person may do", () => {
   test("a refusal of a step is shown in the server's words and the incident stays as it was", async () => {
     page([breach()], { "POST /v1/breaches/b1/sign-off": { status: 409, body: { error: "illegal_transition", message: "an incident cannot move from signed_off to signed_off" } } });
     const region = await open();
+    await within(region).findByText(/DRAFT: for the Board\./);
     fireEvent.click(within(region).getByRole("button", { name: "Sign off the drafts" }));
     expect((await within(region).findByText(/cannot move from signed_off to signed_off/)).closest("[role=alert]")).toBeTruthy();
     expect(within(region).getByRole("button", { name: "Sign off the drafts" })).toBeTruthy();
