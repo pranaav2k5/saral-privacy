@@ -114,6 +114,17 @@ describe("ApiClient", () => {
     expect(calls[1]?.init.body).toBeUndefined();
   });
 
+  test("a person's consents are searched with the identifier in a POST body and never in the address, and the summary asks for a number of days", async () => {
+    const { api, calls } = client(() => ({ body: { consents: [], truncated: false } }));
+    await api.searchConsents("+919810000001");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(calls[0]?.url).toBe("https://api.example.org/v1/consents/search");
+    expect(JSON.parse(calls[0]?.init.body as string)).toEqual({ identifier: "+919810000001" });
+    await api.consentSummary(7);
+    expect(calls[1]?.url).toBe("https://api.example.org/v1/consents/summary?days=7");
+    expect(calls[1]?.init.method).toBe("GET");
+  });
+
   test("a 204 (disabling an endpoint) is success with no body", async () => {
     const { api } = client(() => ({ status: 204, rawBody: "" }));
     await expect(api.disableEndpoint("e1")).resolves.toBeUndefined();

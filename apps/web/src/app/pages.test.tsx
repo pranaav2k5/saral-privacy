@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import Consents from "./consents/page";
 import Integrations from "./integrations/page";
 import Notices from "./notices/page";
 import Requests from "./requests/page";
@@ -21,6 +22,12 @@ test("an administrator who opens the requests page is told it is not for their r
 
 test("an officer who opens the notices page is told it is not for their role, and nothing is requested", () => {
   const r = renderScreen(<AppFrame><Notices /></AppFrame>, { role: "dpo" });
+  expect(screen.getByText("Your role does not have access to this page.")).toBeTruthy();
+  expect(r.calls).toHaveLength(0);
+});
+
+test("an administrator who opens the consents page is told it is not for their role, and nothing is requested", () => {
+  const r = renderScreen(<AppFrame><Consents /></AppFrame>, { role: "tenant_admin" });
   expect(screen.getByText("Your role does not have access to this page.")).toBeTruthy();
   expect(r.calls).toHaveLength(0);
 });

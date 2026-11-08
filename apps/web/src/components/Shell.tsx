@@ -16,6 +16,7 @@ export const NAV: Record<Role, readonly { href: string; label: string }[]> = {
   dpo: [
     { href: "/", label: "Overview" },
     { href: "/requests", label: "Requests" },
+    { href: "/consents", label: "Consents" },
     { href: "/audit", label: "Audit" },
     { href: "/account", label: "Account" },
   ],

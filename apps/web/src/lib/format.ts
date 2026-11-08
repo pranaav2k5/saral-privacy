@@ -19,5 +19,8 @@ export function dueLabel(dueAt: string, state: RequestState, now: Date = new Dat
   return { text: `Due in ${plural(days, "day")}`, tone: days <= 3 ? "soon" : "ok" };
 }
 
+/** A UTC day (`YYYY-MM-DD`) as a date in the reader's own format. */
+export const dayLabel = (iso: string): string => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { dateStyle: "medium", timeZone: "UTC" });
+
 /** A date and time in the reader's own format, e.g. for submission times. */
 export const when = (iso: string): string => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });

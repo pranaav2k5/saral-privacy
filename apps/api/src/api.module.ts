@@ -7,6 +7,8 @@ import { DEFAULT_LIMITS, RATE_LIMITS, RATE_LIMIT_CLOCK } from "./ratelimit/polic
 import { IpRateLimitGuard, PrincipalRateLimitGuard } from "./ratelimit/rate-limit.guard.js";
 import { RateLimitService } from "./ratelimit/rate-limit.service.js";
 import { ConsentsController } from "./consent/consent.controller.js";
+import { ConsentReviewController } from "./consent/consent-review.controller.js";
+import { ConsentReviewService } from "./consent/consent-review.service.js";
 import { ConsentService } from "./consent/consent.service.js";
 import { Database } from "./db/database.js";
 import { DsrController } from "./dsr/dsr.controller.js";
@@ -28,7 +30,7 @@ import { WebhookWorker } from "./webhooks/worker.js";
 import { NoticeService } from "./notices/notice.service.js";
 
 @Module({
-  controllers: [AuthController, DsrController, ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
+  controllers: [AuthController, DsrController, ConsentsController, ConsentReviewController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
   providers: [
     { provide: SETTINGS, useFactory: () => readSettings(process.env) },
     { provide: KEY_PROVIDER, useFactory: (settings: Settings) => createKeyProvider(settings), inject: [SETTINGS] },
@@ -36,6 +38,7 @@ import { NoticeService } from "./notices/notice.service.js";
     AuditService,
     PrincipalService,
     ConsentService,
+    ConsentReviewService,
     NoticeService,
     DsrService,
     StaffService,

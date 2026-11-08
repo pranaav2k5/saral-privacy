@@ -63,6 +63,32 @@ export interface DeliveryRecord {
   lastError: string | null;
 }
 
+/** One consent of one person, as the data protection officer sees it. */
+export interface ConsentView {
+  id: string;
+  status: "granted" | "withdrawn" | "expired";
+  grantedAt: string;
+  withdrawnAt: string | null;
+  collectionMethod: "web_sdk" | "api" | "dpo_entry";
+  notice: { id: string; version: number; language: string };
+  purposes: { key: string; granted: boolean }[];
+  receiptId: string | null;
+}
+
+export interface ConsentCounts {
+  active: number;
+  withdrawn: number;
+  expired: number;
+}
+
+export interface ConsentSummary {
+  from: string;
+  to: string;
+  totals: ConsentCounts;
+  purposes: ({ key: string } & ConsentCounts)[];
+  days: { date: string; granted: number; withdrawn: number }[];
+}
+
 export interface NoticeSummary {
   id: string;
   version: number;
@@ -176,6 +202,9 @@ export class ApiClient {
   createEndpoint = (url: string, events: WebhookEvent[]) => this.request<Endpoint & { secret: string }>("POST", "/v1/webhook-endpoints", { url, events });
   disableEndpoint = (id: string) => this.request<void>("DELETE", `/v1/webhook-endpoints/${encodeURIComponent(id)}`);
   rotateSecret = (id: string) => this.request<{ id: string; secret: string }>("POST", `/v1/webhook-endpoints/${encodeURIComponent(id)}/rotate-secret`);
+  /** A person's consents. The identifier goes in the body of a POST, never in an address. */
+  searchConsents = (identifier: string) => this.request<{ consents: ConsentView[]; truncated: boolean }>("POST", "/v1/consents/search", { identifier });
+  consentSummary = (days: number) => this.request<ConsentSummary>("GET", `/v1/consents/summary?days=${String(days)}`);
   /** The most recent deliveries of an endpoint, newest first. */
   listDeliveries = (endpointId: string) => this.request<DeliveryRecord[]>("GET", `/v1/webhook-endpoints/${encodeURIComponent(endpointId)}/deliveries`);
   /** Puts a failed delivery back in the queue. */

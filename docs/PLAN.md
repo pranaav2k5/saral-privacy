@@ -467,7 +467,7 @@ This section records what exists in the repository against the scope in section 
 |---|---|
 | 8. RoPA wizard | Not started |
 | 9. Breach workflow | Not started |
-| 10. DPO dashboard | Built for the core screens (`apps/web`: sign-in with MFA, overview, rights-request queue with deadlines and decisions, audit verification, notice publishing, webhook integrations, account and password change; LLD section 11, threat models 0009 and 0010). Not built: consent search, consent funnel, a script content security policy. |
+| 10. DPO dashboard | Built for the core screens (`apps/web`: sign-in with MFA, overview, rights-request queue with deadlines and decisions, audit verification, consent search and overview, notice publishing, webhook integrations, account and password change; LLD section 11, threat models 0009 and 0010). Not built: a funnel from banner views to consents (views are not recorded), a script content security policy. |
 | 11. Four more languages | Not started |
 | 12. External VAPT | Not started. Book the slot in week 6 as planned. |
 | 13. Public verifier page and JWKS | JWKS built; verifier page not built |
