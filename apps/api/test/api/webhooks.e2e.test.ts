@@ -3,7 +3,7 @@ import { connect, uid } from "../db/helpers.js";
 import { PHONE, startApi, type Api } from "./harness.js";
 import { WebhookWorker } from "../../src/webhooks/worker.js";
 import { sha256Hex } from "@saral/audit-chain";
-import { endpointSecret, verifyWebhookSignature } from "../../src/webhooks/signature.js";
+import { endpointSecret, signWebhook, verifyWebhookSignature } from "../../src/webhooks/signature.js";
 
 let api: Api;
 let worker: WebhookWorker;
@@ -453,7 +453,7 @@ describe("rotating with the old secret left working for a while", () => {
     if (call === undefined) throw new Error("no delivery was made to the endpoint");
     const header = call.headers["X-Saral-Signature"] as string;
     const secrets = (id: string) => (v: number) => verifyWebhookSignature(endpointSecret(api.keys.webhookKey(), id, v), header, call.body, Math.floor(at.getTime() / 1000));
-    return { header, signatures: header.split(",").filter((p) => p.startsWith("v1=")).length, checks: secrets };
+    return { header, body: call.body, signatures: header.split(",").filter((p) => p.startsWith("v1=")).length, checks: secrets };
   };
   const listed = async (id: string) => (await api.http().get("/v1/webhook-endpoints").set(bearer(api.A.admin))).body.find((e: { id: string }) => e.id === id) as { previousSecretUntil: string | null };
 
@@ -470,7 +470,28 @@ describe("rotating with the old secret left working for a while", () => {
     const d = await delivery("overlap-on");
     expect(d.signatures).toBe(2);
     expect([d.checks(e.id)(2), d.checks(e.id)(1), d.checks(e.id)(3)]).toEqual([true, true, false]);
-    expect(d.header.split(",")[1]).toBe(`v1=${d.header.split("v1=")[1]?.split(",")[0] as string}`);
+    // The new secret's signature comes first and the old one's second, each exactly what that secret gives for this body and time.
+    const t = Number(d.header.split(",")[0]?.slice(2));
+    const expectedFor = (v: number) => signWebhook(endpointSecret(api.keys.webhookKey(), e.id, v), t, d.body).split(",")[1];
+    expect(d.header.split(",").slice(1)).toEqual([expectedFor(2), expectedFor(1)]);
+  });
+
+  test("the 24 hours count from when the rotation takes effect, not from when it was asked for, which can be later if it has to wait for the organisation's lock", async () => {
+    const e = await make("overlap-wait");
+    const holder = await connect(api.db);
+    try {
+      await holder.query("BEGIN");
+      await holder.query("SELECT audit_append_lock($1)", [api.A.id]);
+      const asked = rotate(api.A.admin, e.id, { overlap: true }).then((r) => r);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const released = Date.now();
+      await holder.query("COMMIT");
+      const res = await asked;
+      expect(res.status).toBe(200);
+      expect(Date.parse(res.body.previousSecretValidUntil as string) - 24 * HOUR).toBeGreaterThanOrEqual(released - 5);
+    } finally {
+      await holder.end();
+    }
   });
 
   test("without overlap (the default) the old secret stops at once, the answer and the list say there is no previous secret, and one signature is sent", async () => {

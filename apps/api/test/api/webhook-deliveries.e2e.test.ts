@@ -199,6 +199,46 @@ describe("an endpoint that keeps failing", () => {
     expect(e?.disabledReason).toBe("failures");
   });
 
+  describe("after the administrator switches it on again", () => {
+    const switchOn = (ep: string) => api.http().post(`/v1/webhook-endpoints/${ep}/enable`).set(bearer(api.A.admin));
+    /** An endpoint Saral switched off after ten failures, then switched on by the administrator. */
+    async function switchedOnAgain(name: string) {
+      const ep = await freshEndpoint(api.A, name);
+      for (let i = 0; i < 10; i++) await delivery(api.A.id, ep, "failed", { ageMinutes: 100 - i });
+      await owner("UPDATE webhook_endpoints SET disabled_at = now(), disabled_reason = 'failures' WHERE id = $1", [ep]);
+      expect((await switchOn(ep)).status).toBe(200);
+      return ep;
+    }
+
+    test("the failures from before do not count: one new failure for good does not switch it off again", async () => {
+      const ep = await switchedOnAgain("again-one");
+      await delivery(api.A.id, ep, "pending", { attempts: 14, ageMinutes: 0 });
+      api.hooks.script = [500];
+      const run = await worker.runOnce(new Date());
+      expect(run.failed).toBe(1);
+      expect((await stateOf(ep))?.disabledAt).toBeNull();
+    });
+
+    test("ten new failures for good do switch it off again", async () => {
+      const ep = await switchedOnAgain("again-ten");
+      for (let i = 0; i < 9; i++) await delivery(api.A.id, ep, "failed", { ageMinutes: 0 });
+      await delivery(api.A.id, ep, "pending", { attempts: 14, ageMinutes: 0 });
+      api.hooks.script = [500];
+      await worker.runOnce(new Date());
+      const e = await stateOf(ep);
+      expect(e?.disabledAt).not.toBeNull();
+      expect(e?.disabledReason).toBe("failures");
+    });
+
+    test("an endpoint that was never switched off and on has its whole history counted, as before", async () => {
+      const ep = await freshEndpoint(api.A, "never-off");
+      await aboutToGiveUp(ep, 9);
+      api.hooks.script = [500];
+      await worker.runOnce(new Date());
+      expect((await stateOf(ep))?.disabledAt).not.toBeNull();
+    });
+  });
+
   test("is an audit event of its own, not recorded as the administrator's doing", async () => {
     const ep = await freshEndpoint(api.A, "deadaudit");
     await aboutToGiveUp(ep, 9);

@@ -8,3 +8,9 @@
 
 ALTER TABLE webhook_endpoints ADD COLUMN rotated_at timestamptz CHECK (rotated_at IS NULL OR secret_version > 1);
 GRANT UPDATE (rotated_at) ON webhook_endpoints TO saral_app;
+
+-- When an administrator last switched an endpoint on again. The automatic switch-off looks at an endpoint's most recent finished
+-- deliveries; the ones from before the administrator decided to switch it on again are not held against it, so it gets a fresh
+-- start. An endpoint never switched off and on has none.
+ALTER TABLE webhook_endpoints ADD COLUMN enabled_at timestamptz;
+GRANT UPDATE (enabled_at) ON webhook_endpoints TO saral_app;

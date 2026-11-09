@@ -134,7 +134,7 @@ export class WebhookService {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number; rotated_at: Date | null }>(
-        "UPDATE webhook_endpoints SET secret_version = secret_version + 1, rotated_at = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version, rotated_at",
+        "UPDATE webhook_endpoints SET secret_version = secret_version + 1, rotated_at = CASE WHEN $2::boolean THEN clock_timestamp() ELSE NULL END WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version, rotated_at",
         [id, overlap]);
       const e = r.rows[0];
       if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
@@ -171,7 +171,7 @@ export class WebhookService {
       const count = (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM webhook_endpoints WHERE disabled_at IS NULL")).rows[0]?.n ?? 0;
       if (count >= MAX_ENDPOINTS) throw new ConflictException({ error: "too_many_endpoints", message: `a tenant may have at most ${String(MAX_ENDPOINTS)} active endpoints` });
       const r = await c.query<EndpointRow>(
-        `UPDATE webhook_endpoints SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1 AND disabled_at IS NOT NULL
+        `UPDATE webhook_endpoints SET disabled_at = NULL, disabled_reason = NULL, enabled_at = clock_timestamp() WHERE id = $1 AND disabled_at IS NOT NULL
          RETURNING id, url, events, created_at, disabled_at, disabled_reason, secret_version, rotated_at`, [id]);
       const e = r.rows[0];
       if (e === undefined) throw new ConflictException({ error: "already_enabled", message: "this endpoint is already on" });
@@ -237,7 +237,8 @@ export class WebhookService {
   }
 
   /**
-   * Called by the worker when a delivery has just failed for good. If the endpoint's last ten finished deliveries have all
+   * Called by the worker when a delivery has just failed for good. If the endpoint's last ten finished deliveries (not counting any from
+   * before the administrator last switched it on again, which get a fresh start) have all
    * failed (a delivered one among them shows it still works for some events), it is disabled, for the same reason an administrator
    * would: nothing more is sent, and its waiting events are closed. The administrator can switch it on again.
    */
@@ -245,7 +246,9 @@ export class WebhookService {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
       const recent = await c.query<{ state: DeliveryState }>(
-        "SELECT state FROM webhook_deliveries WHERE endpoint_id = $1 AND state IN ('delivered', 'failed') ORDER BY created_at DESC, id LIMIT $2",
+        `SELECT state FROM webhook_deliveries WHERE endpoint_id = $1 AND state IN ('delivered', 'failed')
+           AND created_at >= coalesce((SELECT enabled_at FROM webhook_endpoints WHERE id = $1), '-infinity'::timestamptz)
+         ORDER BY created_at DESC, id LIMIT $2`,
         [endpointId, AUTO_DISABLE_AFTER],
       );
       if (recent.rows.length < AUTO_DISABLE_AFTER || recent.rows.some((r) => r.state !== "failed")) return false;

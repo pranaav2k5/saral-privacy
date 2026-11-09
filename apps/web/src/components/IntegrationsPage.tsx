@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { DeliveryRecord, Endpoint, WebhookEvent } from "@/lib/api";
 import { when } from "@/lib/format";
 import { useSession } from "@/lib/session";
@@ -114,6 +114,8 @@ export function IntegrationsPage() {
   const [confirm, setConfirmed] = useState<Confirm>(null);
   /** For a rotation: keep the old secret working for 24 hours. Forgotten whenever a question is opened or closed. */
   const [keepOld, setKeepOld] = useState(false);
+  /** The question that is open now, for an action that finishes later to check it is still the one it belongs to. */
+  const openNow = useRef<Confirm>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
@@ -137,16 +139,26 @@ export function IntegrationsPage() {
 
   /** Opens or closes a question about one endpoint. Any notice about an earlier action goes, and so does the choice made in a rotation. */
   function setConfirm(next: Confirm): void {
+    openNow.current = next;
     setConfirmed(next);
     setKeepOld(false);
     setNotice(null);
+  }
+
+  /**
+   * Closes the question an action belongs to when the action finishes, but only if that question is still the one open: the person may
+   * have cancelled it while the request was out and opened another, which must not be closed (nor its choice forgotten) by a reply to
+   * the earlier one.
+   */
+  function closeQuestion(ep: Endpoint, kind: "rotate" | "disable" | "enable"): void {
+    if (openNow.current?.id === ep.id && openNow.current.kind === kind) setConfirm(null);
   }
 
   async function rotate(ep: Endpoint) {
     await row.run(async () => {
       const r = await api.rotateSecret(ep.id, keepOld);
       setShown({ url: ep.url, secret: r.secret, rotated: true, ...(r.previousSecretValidUntil === null ? {} : { oldUntil: r.previousSecretValidUntil }) });
-      setConfirm(null);
+      closeQuestion(ep, "rotate");
       list.refresh();
     });
   }
@@ -154,7 +166,7 @@ export function IntegrationsPage() {
   async function disable(ep: Endpoint) {
     await row.run(async () => {
       await api.disableEndpoint(ep.id);
-      setConfirm(null);
+      closeQuestion(ep, "disable");
       list.refresh();
     });
   }
@@ -162,7 +174,7 @@ export function IntegrationsPage() {
   async function enable(ep: Endpoint) {
     await row.run(async () => {
       await api.enableEndpoint(ep.id);
-      setConfirm(null);
+      closeQuestion(ep, "enable");
       setNotice(`${ep.url} is on again. It will be sent events from now on.`);
       list.refresh();
     });

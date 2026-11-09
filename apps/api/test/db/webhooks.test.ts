@@ -193,6 +193,15 @@ describe("when a secret was rotated with the old one left working", () => {
     await db.owner.query("UPDATE webhook_endpoints SET secret_version = 1, rotated_at = NULL WHERE id = $1", [uid("a", 70)]);
   });
 
+  test("a time of switching on again is a column the application role may write, so the failures before it can be told from those after", async () => {
+    await asApp(db, TENANT_A, async (c) => {
+      await c.query("UPDATE webhook_endpoints SET enabled_at = now() WHERE id = $1", [uid("a", 70)]);
+      expect((await c.query("SELECT enabled_at IS NOT NULL AS has FROM webhook_endpoints WHERE id = $1", [uid("a", 70)])).rows[0]).toEqual({ has: true });
+    });
+    await db.owner.query("UPDATE webhook_endpoints SET enabled_at = NULL WHERE id = $1", [uid("a", 70)]);
+    expect((await db.owner.query("SELECT enabled_at FROM webhook_endpoints WHERE id = $1", [uid("b", 70)])).rows[0]).toEqual({ enabled_at: null });
+  });
+
   test("cannot be set on a secret that has never been rotated", async () => {
     await expect(asApp(db, TENANT_A, (c) => c.query("UPDATE webhook_endpoints SET rotated_at = now() WHERE id = $1", [uid("a", 70)]))).rejects.toThrow(/check constraint/);
   });

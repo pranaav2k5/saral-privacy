@@ -142,6 +142,22 @@ describe("the previous secret in the list", () => {
   });
 });
 
+describe("a reply that arrives after the person has moved on", () => {
+  test("a rotation finishing does not close a different question opened about the same endpoint", async () => {
+    let release: () => void = () => undefined;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    page({ [`POST /v1/webhook-endpoints/${E1}/rotate-secret`]: { body: { id: E1, secret: SHOWN_ONCE, previousSecretValidUntil: null }, wait } });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, rotate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: `Disable ${live.url}` }));
+    release();
+    await screen.findByText(SHOWN_ONCE);
+    expect(screen.getByRole("button", { name: "Yes, disable" })).toBeTruthy();
+  });
+});
+
 describe("switching an endpoint on again", () => {
   const ENABLED = { ...off, disabledAt: null, disabledReason: null };
   const enableRoutes = (answer: Route | Route[]) => ({
@@ -210,6 +226,22 @@ describe("switching an endpoint on again", () => {
     release();
     await screen.findByText(/is on again/);
     expect(v.callsTo("POST", `/v1/webhook-endpoints/${E2}/enable`)).toHaveLength(1);
+  });
+
+  test("when the request finishes after the person has opened another question, that question and its choice are left alone", async () => {
+    let release: () => void = () => undefined;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    page(enableRoutes({ body: ENABLED, wait }));
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, switch on" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Cancel" })[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    fireEvent.click(screen.getByLabelText("Keep the old secret working for 24 hours"));
+    release();
+    await screen.findByText(/is on again/);
+    expect((screen.getByLabelText("Keep the old secret working for 24 hours") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "Yes, rotate" })).toBeTruthy();
   });
 
   test("a notice about one endpoint is cleared when another action is taken", async () => {
