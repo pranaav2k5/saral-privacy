@@ -40,12 +40,14 @@ describe("the list", () => {
     expect(rows[2]?.textContent).toContain(when(off.disabledAt));
   });
 
-  test("a disabled endpoint has no actions; an active one can be rotated or disabled", async () => {
+  test("an active endpoint can be rotated or disabled, and a disabled one can only be switched on again or looked at", async () => {
     page();
     await screen.findAllByRole("row");
     expect(screen.getAllByRole("button", { name: /^Rotate secret/ })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: /^Disable/ })).toHaveLength(1);
     expect(screen.getByRole("button", { name: `Rotate secret for ${live.url}` })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /^Switch on/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: `Switch on ${off.url}` })).toBeTruthy();
   });
 
   test("while loading it says so, and with no endpoints it says to add one", async () => {
@@ -124,6 +126,103 @@ describe("adding an endpoint", () => {
   });
 });
 
+describe("the previous secret in the list", () => {
+  test("an endpoint whose old secret still works says until when, and one whose time has passed does not", async () => {
+    const until = "2026-11-07T08:00:00.000Z";
+    page({ "GET /v1/webhook-endpoints": { body: [{ ...live, previousSecretUntil: until }, { ...off, previousSecretUntil: "2026-11-05T08:00:00.000Z" }] } });
+    const rows = await screen.findAllByRole("row");
+    expect(rows[1]?.textContent).toContain(`Active. The previous secret works until ${when(until)}.`);
+    expect(rows[2]?.textContent).not.toContain("previous secret");
+  });
+
+  test("an endpoint with no previous secret says only that it is active", async () => {
+    page({ "GET /v1/webhook-endpoints": { body: [{ ...live, previousSecretUntil: null }] } });
+    const rows = await screen.findAllByRole("row");
+    expect(rows[1]?.textContent).not.toContain("previous secret");
+  });
+});
+
+describe("switching an endpoint on again", () => {
+  const ENABLED = { ...off, disabledAt: null, disabledReason: null };
+  const enableRoutes = (answer: Route | Route[]) => ({
+    [`POST /v1/webhook-endpoints/${E2}/enable`]: answer,
+    "GET /v1/webhook-endpoints": [{ body: [live, off] }, { body: [live, ENABLED] }],
+  });
+
+  test("asks first, says the secret is the one it had, and sends nothing until the person agrees", async () => {
+    const v = page(enableRoutes({ body: ENABLED }));
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    expect(screen.getByText(/send events to this address again, signed with the secret it had before/i)).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Yes, switch on" }));
+    expect(v.callsTo("POST", `/v1/webhook-endpoints/${E2}/enable`)).toHaveLength(0);
+  });
+
+  test("Cancel sends nothing and leaves it off", async () => {
+    const v = page(enableRoutes({ body: ENABLED }));
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(v.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: `Switch on ${off.url}` })).toBeTruthy();
+  });
+
+  test("Yes sends the request for that endpoint, reloads the list, says it is on, and offers the actions of an active endpoint", async () => {
+    const v = page(enableRoutes({ body: ENABLED }));
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, switch on" }));
+    expect((await screen.findByRole("status")).textContent).toBe(`${off.url} is on again. It will be sent events from now on.`);
+    expect(v.callsTo("POST", `/v1/webhook-endpoints/${E2}/enable`)).toHaveLength(1);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^Rotate secret/ })).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: /^Switch on/ })).toBeNull();
+  });
+
+  test("an endpoint Saral switched off after failures can be switched on too", async () => {
+    page({ "GET /v1/webhook-endpoints": { body: [stopped] } });
+    await screen.findAllByRole("row");
+    expect(screen.getByRole("button", { name: `Switch on ${stopped.url}` })).toBeTruthy();
+  });
+
+  test.each([
+    ["too many active endpoints", 409, "A tenant may have at most 10 active endpoints."],
+    ["an address that no longer passes", 422, "That address is not allowed."],
+  ])("when the server refuses because of %s its words are shown and the endpoint stays off", async (_n, status, message) => {
+    page(enableRoutes({ status, body: { message } }));
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, switch on" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(message);
+    expect(screen.queryByText(/is on again/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Yes, switch on" })).toBeTruthy();
+  });
+
+  test("while the request is out the button is disabled, so it is sent once", async () => {
+    let release: () => void = () => undefined;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const v = page(enableRoutes({ body: ENABLED, wait }));
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    const yes = screen.getByRole("button", { name: "Yes, switch on" });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await waitFor(() => expect((screen.getByRole("button", { name: "Yes, switch on" }) as HTMLButtonElement).disabled).toBe(true));
+    release();
+    await screen.findByText(/is on again/);
+    expect(v.callsTo("POST", `/v1/webhook-endpoints/${E2}/enable`)).toHaveLength(1);
+  });
+
+  test("a notice about one endpoint is cleared when another action is taken", async () => {
+    page({ ...enableRoutes({ body: ENABLED }), [`DELETE /v1/webhook-endpoints/${E1}`]: { status: 204 } });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Switch on ${off.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, switch on" }));
+    await screen.findByText(/is on again/);
+    fireEvent.click(screen.getByRole("button", { name: `Disable ${live.url}` }));
+    expect(screen.queryByText(/is on again/)).toBeNull();
+  });
+});
+
 describe("rotating and disabling", () => {
   test("rotating asks first, says the old secret stops, then shows the new secret once", async () => {
     const v = page({ [`POST /v1/webhook-endpoints/${E1}/rotate-secret`]: { body: { id: E1, secret: SHOWN_ONCE } } });
@@ -136,6 +235,52 @@ describe("rotating and disabling", () => {
     expect(await screen.findByText(SHOWN_ONCE)).toBeTruthy();
     expect(screen.getByText(/shown only once/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Yes, rotate" })).toBeNull();
+  });
+
+  test("the old secret's fate is a choice that starts as stopping it at once, and is explained in words either way", async () => {
+    page();
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    const keep = screen.getByLabelText("Keep the old secret working for 24 hours") as HTMLInputElement;
+    expect(keep.checked).toBe(false);
+    expect(screen.getByText(/old secret stops working at once/i).textContent).toContain("Choose this if the old secret may have leaked");
+    fireEvent.click(keep);
+    expect(screen.getByText(/keeps working for 24 hours, then stops/i).textContent).toContain("Use this only if the old secret has not leaked");
+    expect(screen.queryByText(/stops working at once/i)).toBeNull();
+  });
+
+  test("the choice is forgotten when the question is closed", async () => {
+    page();
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    fireEvent.click(screen.getByLabelText("Keep the old secret working for 24 hours"));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    expect((screen.getByLabelText("Keep the old secret working for 24 hours") as HTMLInputElement).checked).toBe(false);
+  });
+
+  test("rotating without keeping the old secret sends no choice, and the notice says the old secret has stopped", async () => {
+    const v = page({ [`POST /v1/webhook-endpoints/${E1}/rotate-secret`]: { body: { id: E1, secret: SHOWN_ONCE, previousSecretValidUntil: null } } });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, rotate" }));
+    await screen.findByText(SHOWN_ONCE);
+    expect(v.callsTo("POST", `/v1/webhook-endpoints/${E1}/rotate-secret`)[0]?.body).toBeUndefined();
+    expect(screen.getByText(/The old secret has stopped working\./)).toBeTruthy();
+  });
+
+  test("rotating and keeping the old secret sends the choice, and the notice says until when both work", async () => {
+    const until = "2026-11-07T10:00:00.000Z";
+    const v = page({ [`POST /v1/webhook-endpoints/${E1}/rotate-secret`]: { body: { id: E1, secret: SHOWN_ONCE, previousSecretValidUntil: until } } });
+    await screen.findAllByRole("row");
+    fireEvent.click(screen.getByRole("button", { name: `Rotate secret for ${live.url}` }));
+    fireEvent.click(screen.getByLabelText("Keep the old secret working for 24 hours"));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, rotate" }));
+    await screen.findByText(SHOWN_ONCE);
+    expect(v.callsTo("POST", `/v1/webhook-endpoints/${E1}/rotate-secret`)[0]?.body).toEqual({ overlap: true });
+    expect(screen.getByText(/The old secret keeps working until/).textContent).toContain(when(until));
+    expect(screen.getByText(/The old secret keeps working until/).textContent).toContain("Switch your system to this secret before then");
+    expect(screen.queryByText(/has stopped working/)).toBeNull();
   });
 
   test("Cancel leaves the endpoint alone", async () => {
@@ -154,7 +299,7 @@ describe("rotating and disabling", () => {
     });
     await screen.findAllByRole("row");
     fireEvent.click(screen.getByRole("button", { name: `Disable ${live.url}` }));
-    expect(screen.getByText(/nothing more is sent to this endpoint/i)).toBeTruthy();
+    expect(screen.getByText(/nothing more is sent to this endpoint until you switch it on again/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Yes, disable" }));
     await waitFor(() => expect(within(screen.getByRole("table")).getAllByText(/^Disabled/)).toHaveLength(2));
     expect(screen.queryByRole("button", { name: /^Disable/ })).toBeNull();

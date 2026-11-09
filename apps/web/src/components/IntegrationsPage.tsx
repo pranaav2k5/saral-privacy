@@ -17,11 +17,13 @@ const EVENTS: readonly { id: WebhookEvent; label: string }[] = [
 ];
 const eventLabel = (id: WebhookEvent) => EVENTS.find((e) => e.id === id)?.label ?? id;
 
-type Confirm = { id: string; kind: "rotate" | "disable" } | null;
+type Confirm = { id: string; kind: "rotate" | "disable" | "enable" } | null;
 interface Shown {
   url: string;
   secret: string;
   rotated: boolean;
+  /** When a rotation kept the old secret working, until when. */
+  oldUntil?: string;
 }
 
 const secondary = "!bg-sheet !text-action border border-action";
@@ -104,12 +106,15 @@ function Deliveries({ endpoint, onClose }: { endpoint: Endpoint; onClose: () => 
 }
 
 export function IntegrationsPage() {
-  const { api } = useSession();
+  const { api, now } = useSession();
   const load = useCallback(() => api.listEndpoints(), [api]);
   const list = useLoad(load);
   const [url, setUrl] = useState("");
   const [chosen, setChosen] = useState<readonly WebhookEvent[]>([]);
-  const [confirm, setConfirm] = useState<Confirm>(null);
+  const [confirm, setConfirmed] = useState<Confirm>(null);
+  /** For a rotation: keep the old secret working for 24 hours. Forgotten whenever a question is opened or closed. */
+  const [keepOld, setKeepOld] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const create = useAction<void>(messageOf);
@@ -130,11 +135,19 @@ export function IntegrationsPage() {
     });
   }
 
+  /** Opens or closes a question about one endpoint. Any notice about an earlier action goes, and so does the choice made in a rotation. */
+  function setConfirm(next: Confirm): void {
+    setConfirmed(next);
+    setKeepOld(false);
+    setNotice(null);
+  }
+
   async function rotate(ep: Endpoint) {
     await row.run(async () => {
-      const r = await api.rotateSecret(ep.id);
-      setShown({ url: ep.url, secret: r.secret, rotated: true });
+      const r = await api.rotateSecret(ep.id, keepOld);
+      setShown({ url: ep.url, secret: r.secret, rotated: true, ...(r.previousSecretValidUntil === null ? {} : { oldUntil: r.previousSecretValidUntil }) });
       setConfirm(null);
+      list.refresh();
     });
   }
 
@@ -145,6 +158,21 @@ export function IntegrationsPage() {
       list.refresh();
     });
   }
+
+  async function enable(ep: Endpoint) {
+    await row.run(async () => {
+      await api.enableEndpoint(ep.id);
+      setConfirm(null);
+      setNotice(`${ep.url} is on again. It will be sent events from now on.`);
+      list.refresh();
+    });
+  }
+
+  const status = (ep: Endpoint): string => {
+    if (ep.disabledAt) return ep.disabledReason === "failures" ? `Switched off ${when(ep.disabledAt)} after repeated failures` : `Disabled ${when(ep.disabledAt)}`;
+    const until = ep.previousSecretUntil;
+    return until && Date.parse(until) > now() ? `Active. The previous secret works until ${when(until)}.` : "Active";
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -159,7 +187,14 @@ export function IntegrationsPage() {
         <section key={shown.secret} aria-labelledby="secret-h" className="flex flex-col gap-2 rounded border border-soon-fg bg-soon-bg p-4 text-soon-fg">
           <h2 id="secret-h" ref={focusOnMount} tabIndex={-1} className="font-semibold">{shown.rotated ? "New signing secret" : "Signing secret"} for {shown.url}</h2>
           <p className="break-all font-mono text-lg select-all">{shown.secret}</p>
-          <p>This secret is shown only once. Copy it into your system now. {shown.rotated ? "The old secret has stopped working." : "It cannot be shown again."}</p>
+          <p>
+            This secret is shown only once. Copy it into your system now.{" "}
+            {!shown.rotated
+              ? "It cannot be shown again."
+              : shown.oldUntil === undefined
+                ? "The old secret has stopped working."
+                : `The old secret keeps working until ${when(shown.oldUntil)}. Switch your system to this secret before then.`}
+          </p>
           <Button type="button" className="self-start" onClick={() => setShown(null)}>I have copied the secret</Button>
         </section>
       )}
@@ -167,6 +202,7 @@ export function IntegrationsPage() {
       <section aria-labelledby="endpoints-h" className="flex flex-col gap-3">
         <h2 id="endpoints-h" className="text-xl font-semibold">Endpoints</h2>
         {row.error && <Alert>{row.error}</Alert>}
+        {notice && <p role="status" className="rounded border border-ok-fg bg-ok-bg px-3 py-2 text-ok-fg">{notice}</p>}
         {list.status === "loading" && <p role="status">Loading endpoints…</p>}
         {list.status === "error" && (
           <div className="flex flex-col items-start gap-3">
@@ -191,9 +227,7 @@ export function IntegrationsPage() {
                 <tr key={ep.id} className="border-b border-rule align-top">
                   <th scope="row" className="break-all py-2 pr-3 font-normal">{ep.url}</th>
                   <td className="py-2 pr-3">{ep.events.map(eventLabel).join(", ")}</td>
-                  <td className="py-2 pr-3">
-                    {!ep.disabledAt ? "Active" : ep.disabledReason === "failures" ? `Switched off ${when(ep.disabledAt)} after repeated failures` : `Disabled ${when(ep.disabledAt)}`}
-                  </td>
+                  <td className="py-2 pr-3">{status(ep)}</td>
                   <td className="py-2">
                     {confirm?.id !== ep.id && (
                       <div className="flex flex-wrap gap-2">
@@ -207,6 +241,11 @@ export function IntegrationsPage() {
                             </Button>
                           </>
                         )}
+                        {ep.disabledAt && (
+                          <Button type="button" className={secondary} onClick={() => setConfirm({ id: ep.id, kind: "enable" })}>
+                            Switch on<span className="sr-only"> {ep.url}</span>
+                          </Button>
+                        )}
                         <Button type="button" className={secondary} onClick={() => setViewing(ep.id)}>
                           Deliveries<span className="sr-only"> for {ep.url}</span>
                         </Button>
@@ -214,14 +253,24 @@ export function IntegrationsPage() {
                     )}
                     {confirm?.id === ep.id && (
                       <div className="flex flex-col gap-2">
+                        {confirm.kind === "rotate" && (
+                          <label className="flex min-h-11 items-center gap-2">
+                            <input type="checkbox" className="size-5" checked={keepOld} onChange={(e) => setKeepOld(e.target.checked)} />
+                            Keep the old secret working for 24 hours
+                          </label>
+                        )}
                         <p>
                           {confirm.kind === "rotate"
-                            ? "A new secret is made and the old secret stops working at once."
-                            : "Nothing more is sent to this endpoint. This cannot be undone."}
+                            ? keepOld
+                              ? "A new secret is made. The old secret keeps working for 24 hours, then stops, so you can switch your system over. Use this only if the old secret has not leaked."
+                              : "A new secret is made and the old secret stops working at once. Choose this if the old secret may have leaked."
+                            : confirm.kind === "enable"
+                              ? "Saral will send events to this address again, signed with the secret it had before. The address is checked again first."
+                              : "Nothing more is sent to this endpoint until you switch it on again."}
                         </p>
                         <div className="flex gap-2">
-                          <Button type="button" ref={focusOnMount} disabled={row.busy} onClick={() => void (confirm.kind === "rotate" ? rotate(ep) : disable(ep))}>
-                            {confirm.kind === "rotate" ? "Yes, rotate" : "Yes, disable"}
+                          <Button type="button" ref={focusOnMount} disabled={row.busy} onClick={() => void (confirm.kind === "rotate" ? rotate(ep) : confirm.kind === "enable" ? enable(ep) : disable(ep))}>
+                            {confirm.kind === "rotate" ? "Yes, rotate" : confirm.kind === "enable" ? "Yes, switch on" : "Yes, disable"}
                           </Button>
                           <Button type="button" className={secondary} onClick={() => setConfirm(null)}>Cancel</Button>
                         </div>

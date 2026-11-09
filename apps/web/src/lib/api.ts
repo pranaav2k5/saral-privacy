@@ -46,6 +46,8 @@ export interface Endpoint {
   disabledAt: string | null;
   /** `failures` when Saral switched it off after repeated failures; anything else that is disabled was the administrator's doing. */
   disabledReason?: "admin" | "failures" | null;
+  /** While the secret before the current one still signs deliveries too (after a rotation that kept it), when that stops. */
+  previousSecretUntil?: string | null;
 }
 
 export type DeliveryState = "pending" | "delivered" | "failed";
@@ -322,7 +324,11 @@ export class ApiClient {
   listEndpoints = () => this.request<Endpoint[]>("GET", "/v1/webhook-endpoints");
   createEndpoint = (url: string, events: WebhookEvent[]) => this.request<Endpoint & { secret: string }>("POST", "/v1/webhook-endpoints", { url, events });
   disableEndpoint = (id: string) => this.request<void>("DELETE", `/v1/webhook-endpoints/${encodeURIComponent(id)}`);
-  rotateSecret = (id: string) => this.request<{ id: string; secret: string }>("POST", `/v1/webhook-endpoints/${encodeURIComponent(id)}/rotate-secret`);
+  /** The old secret stops at once, unless `overlap` is true: then it keeps signing alongside the new one for 24 hours. */
+  rotateSecret = (id: string, overlap = false) =>
+    this.request<{ id: string; secret: string; previousSecretValidUntil: string | null }>("POST", `/v1/webhook-endpoints/${encodeURIComponent(id)}/rotate-secret`, overlap ? { overlap: true } : undefined);
+  /** Switches a disabled endpoint on again, with the secret it had. */
+  enableEndpoint = (id: string) => this.request<Endpoint>("POST", `/v1/webhook-endpoints/${encodeURIComponent(id)}/enable`);
   listBreaches = () => this.request<Breach[]>("GET", "/v1/breaches");
   reportBreach = (r: BreachRequest) => this.request<Breach>("POST", "/v1/breaches", r);
   updateBreach = (id: string, patch: BreachPatch) => this.request<Breach>("PATCH", `/v1/breaches/${encodeURIComponent(id)}`, patch);

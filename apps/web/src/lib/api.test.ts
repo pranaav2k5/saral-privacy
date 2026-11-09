@@ -103,6 +103,19 @@ describe("ApiClient", () => {
     expect(calls[0]?.url).toBe("https://api.example.org/v1/auth/password");
   });
 
+  test("a secret is rotated with a POST that has no body unless the old secret is to be kept, in which case the body says so, and an endpoint is switched on with a POST and no body", async () => {
+    const { api, calls } = client(() => ({ body: {} }));
+    await api.rotateSecret("e1");
+    await api.rotateSecret("e1", false);
+    await api.rotateSecret("e1", true);
+    await api.enableEndpoint("e 1");
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ["POST", "https://api.example.org/v1/webhook-endpoints/e1/rotate-secret"], ["POST", "https://api.example.org/v1/webhook-endpoints/e1/rotate-secret"],
+      ["POST", "https://api.example.org/v1/webhook-endpoints/e1/rotate-secret"], ["POST", "https://api.example.org/v1/webhook-endpoints/e%201/enable"],
+    ]);
+    expect(calls.map((c) => c.init.body === undefined ? undefined : JSON.parse(c.init.body as string))).toEqual([undefined, undefined, { overlap: true }, undefined]);
+  });
+
   test("the delivery log of an endpoint is read from its own address, and a failed delivery is sent again with a POST and no body", async () => {
     const { api, calls } = client(() => ({ body: [] }));
     await api.listDeliveries("e 1");
