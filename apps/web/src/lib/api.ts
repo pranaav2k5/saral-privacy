@@ -63,6 +63,71 @@ export interface DeliveryRecord {
   lastError: string | null;
 }
 
+export type RopaLegalBasis = "consent" | "legitimate_use" | "unsure";
+export type RopaSource = "directly_from_person" | "from_third_party" | "generated_by_us" | "mixed";
+export type RopaRecipientRole = "processor" | "third_party";
+export type RopaYesNoUnsure = "yes" | "no" | "unsure";
+export type RopaMeasure = "encryption_at_rest" | "encryption_in_transit" | "access_control" | "multi_factor" | "logging" | "backups" | "pseudonymisation" | "physical_security";
+
+export interface RopaRecipient {
+  name: string;
+  role: RopaRecipientRole;
+  /** Two capital letters, such as `IN`. */
+  country: string;
+}
+
+/** One thing the organisation does with personal data. */
+export interface RopaActivity {
+  name: string;
+  description: string;
+  purposes: string[];
+  legalBasis: RopaLegalBasis;
+  principals: string[];
+  personalData: string[];
+  involvesChildren: boolean;
+  source: RopaSource;
+  recipients: RopaRecipient[];
+  crossBorder: boolean;
+  transferCountries: string[];
+  retention: string;
+  securityMeasures: RopaMeasure[];
+  otherMeasures?: string;
+  storage: string;
+  owner: string;
+}
+
+/** The record of processing, as the server stores it. */
+export interface RopaDocument {
+  schema: "saral.ropa/1";
+  organisation: {
+    name: string;
+    address: string;
+    contactName: string;
+    contactEmail: string;
+    website?: string;
+    sector: string;
+    significantDataFiduciary: RopaYesNoUnsure;
+  };
+  review: { lastReviewedOn: string; nextReviewDue?: string };
+  activities: RopaActivity[];
+  notes?: string;
+}
+
+/** One saved version. Versions are numbered from 1 and are never changed or removed. */
+export interface RopaVersion {
+  id: string;
+  version: number;
+  createdAt: string;
+  createdBy: string;
+  note: string | null;
+  /** SHA-256 of the stored text of the record. */
+  sha256: string;
+}
+
+export interface RopaVersionWithRecord extends RopaVersion {
+  document: RopaDocument;
+}
+
 export type BreachState = "reported" | "signed_off" | "board_notified" | "closed";
 export type BreachNature = "confidentiality" | "integrity" | "availability";
 
@@ -266,6 +331,16 @@ export class ApiClient {
   recordBoardNotified = (id: string, body: { notifiedAt: string; reference: string }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/board-notified`, body);
   recordPrincipalsNotified = (id: string, body: { how: string; count: number }) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/principals-notified`, body);
   closeBreach = (id: string, note: string) => this.request<Breach>("POST", `/v1/breaches/${encodeURIComponent(id)}/close`, { note });
+  /** The saved versions of the record of processing, newest first, without the records themselves. */
+  listRopa = () => this.request<RopaVersion[]>("GET", "/v1/ropa");
+  latestRopa = () => this.request<RopaVersionWithRecord>("GET", "/v1/ropa/latest");
+  getRopa = (id: string) => this.request<RopaVersionWithRecord>("GET", `/v1/ropa/${encodeURIComponent(id)}`);
+  /**
+   * Saves the record as the next version. The server refuses a save that changes nothing. `basedOn` is the version the change started from
+   * (0 when none was saved): the server refuses the save if another version has been saved since.
+   */
+  saveRopa = (document: RopaDocument, note?: string, basedOn?: number) =>
+    this.request<RopaVersion>("POST", "/v1/ropa", { document, ...(note === undefined ? {} : { note }), ...(basedOn === undefined ? {} : { basedOn }) });
   /** A person's consents. The identifier goes in the body of a POST, never in an address. */
   searchConsents = (identifier: string) => this.request<{ consents: ConsentView[]; truncated: boolean }>("POST", "/v1/consents/search", { identifier });
   consentSummary = (days: number) => this.request<ConsentSummary>("GET", `/v1/consents/summary?days=${String(days)}`);

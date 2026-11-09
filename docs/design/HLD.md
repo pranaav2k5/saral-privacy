@@ -63,7 +63,7 @@ flowchart LR
 | KMS key provider | not built | no | The development provider derives keys from one secret and refuses production. |
 | Rights requests (DSR) | `apps/api/src/dsr` | yes | State machine, SLA due dates, DPO queue, sealed contacts, erasure. See LLD section 9. |
 | Staff login with MFA | `apps/api/src/staff` | yes | Password, authenticator code, recovery codes, session tokens. See LLD section 10 and ADR 0004. |
-| Staff dashboard | `apps/web` | yes | Sign-in with MFA, overview, rights-request queue, audit page, notice publishing, integrations, account and password change. See LLD section 11 and threat model 0009. Consents: search by identifier and an overview in numbers. Breaches: incident form, drafts, officer sign-off and a record of each step. A funnel from banner views is not built. |
+| Staff dashboard | `apps/web` | yes | Sign-in with MFA, overview, rights-request queue, audit page, notice publishing, integrations, account and password change. See LLD section 11 and threat model 0009. Consents: search by identifier and an overview in numbers. Breaches: incident form, drafts, officer sign-off and a record of each step. A funnel from banner views is not built. Records: the record of processing (a three-step form, saved versions that are never changed, a JSON download and a print view; LLD 6.8, threat model 0015). |
 | ML service | `apps/ml` | shell | Health endpoint only. Translation is done offline (decision D10). |
 
 ## 4. Key flows

@@ -3,6 +3,8 @@ import { APP_GUARD } from "@nestjs/core";
 import { AuditController } from "./audit/audit.controller.js";
 import { AnchorJob } from "./audit/anchor-job.js";
 import { BreachService } from "./breaches/breach.service.js";
+import { RopaController } from "./ropa/ropa.controller.js";
+import { RopaService } from "./ropa/ropa.service.js";
 import { BreachesController } from "./breaches/breaches.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { AuthGuard } from "./auth/auth.guard.js";
@@ -33,7 +35,7 @@ import { WebhookWorker } from "./webhooks/worker.js";
 import { NoticeService } from "./notices/notice.service.js";
 
 @Module({
-  controllers: [AuthController, DsrController, ConsentsController, ConsentReviewController, BreachesController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
+  controllers: [AuthController, DsrController, ConsentsController, ConsentReviewController, BreachesController, RopaController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
   providers: [
     { provide: SETTINGS, useFactory: () => readSettings(process.env) },
     { provide: KEY_PROVIDER, useFactory: (settings: Settings) => createKeyProvider(settings), inject: [SETTINGS] },
@@ -41,6 +43,7 @@ import { NoticeService } from "./notices/notice.service.js";
     AuditService,
     AnchorJob,
     BreachService,
+    RopaService,
     PrincipalService,
     ConsentService,
     ConsentReviewService,
