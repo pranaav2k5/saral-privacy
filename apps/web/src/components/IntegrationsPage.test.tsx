@@ -126,6 +126,47 @@ describe("adding an endpoint", () => {
   });
 });
 
+describe("the reminders", () => {
+  const REMINDERS = ["Breach: Board deadline within 24 hours", "Breach: Board deadline passed", "Record of processing: review due within 14 days", "Record of processing: review overdue"];
+
+  test("are offered apart from the events, with words about when they are sent", async () => {
+    page();
+    await screen.findAllByRole("row");
+    const group = screen.getByRole("group", { name: "Reminders" });
+    expect(within(group).getAllByRole("checkbox").map((c) => (c as HTMLInputElement).labels?.[0]?.textContent)).toEqual(REMINDERS);
+    expect(within(group).getByText(/sent once, by a scheduled job/i).textContent).toContain("so they reach you without anyone opening this page");
+    expect(within(screen.getByRole("group", { name: "Send me" })).getAllByRole("checkbox")).toHaveLength(4);
+  });
+
+  test("a chosen reminder is sent to the API with its id, after the events and in the API's order", async () => {
+    const created = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", url: "https://hooks.example.org/new", events: [], createdAt: "2026-11-06T10:00:00.000Z", disabledAt: null, secret: SHOWN_ONCE };
+    const v = page({ "POST /v1/webhook-endpoints": { status: 201, body: created } });
+    await screen.findAllByRole("row");
+    add("https://hooks.example.org/new", ["Record of processing: review overdue", "Consent given", "Breach: Board deadline passed"]);
+    await screen.findByText(SHOWN_ONCE);
+    expect((v.callsTo("POST", "/v1/webhook-endpoints")[0]?.body as { events: string[] }).events).toEqual(["consent.granted", "breach.deadline_passed", "ropa.review_overdue"]);
+  });
+
+  test("a reminder alone is enough, and the chosen ones are cleared once the endpoint is added", async () => {
+    const created = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", url: "https://hooks.example.org/new", events: [], createdAt: "2026-11-06T10:00:00.000Z", disabledAt: null, secret: SHOWN_ONCE };
+    const v = page({ "POST /v1/webhook-endpoints": { status: 201, body: created } });
+    await screen.findAllByRole("row");
+    add("https://hooks.example.org/new", ["Breach: Board deadline within 24 hours"]);
+    await screen.findByText(SHOWN_ONCE);
+    expect((v.callsTo("POST", "/v1/webhook-endpoints")[0]?.body as { events: string[] }).events).toEqual(["breach.deadline_soon"]);
+    expect((screen.getByLabelText("Breach: Board deadline within 24 hours") as HTMLInputElement).checked).toBe(false);
+  });
+
+  test("are named in words in the list of endpoints and in the delivery log", async () => {
+    const ep = { ...live, events: ["breach.deadline_soon", "ropa.review_overdue"] };
+    page({ "GET /v1/webhook-endpoints": { body: [ep] }, [`GET /v1/webhook-endpoints/${E1}/deliveries`]: { body: [delivery({ id: D1, eventType: "ropa.review_soon" })] } });
+    const rows = await screen.findAllByRole("row");
+    expect(rows[1]?.textContent).toContain("Breach: Board deadline within 24 hours, Record of processing: review overdue");
+    fireEvent.click(screen.getByRole("button", { name: `Deliveries for ${live.url}` }));
+    expect(await screen.findByRole("rowheader", { name: "Record of processing: review due within 14 days" })).toBeTruthy();
+  });
+});
+
 describe("the previous secret in the list", () => {
   test("an endpoint whose old secret still works says until when, and one whose time has passed does not", async () => {
     const until = "2026-11-07T08:00:00.000Z";

@@ -36,7 +36,9 @@ export interface RightsRequest {
   details?: string | null;
 }
 
-export type WebhookEvent = "consent.granted" | "consent.withdrawn" | "dsr.submitted" | "dsr.transitioned";
+export type WebhookEvent =
+  | "consent.granted" | "consent.withdrawn" | "dsr.submitted" | "dsr.transitioned"
+  | "breach.deadline_soon" | "breach.deadline_passed" | "ropa.review_soon" | "ropa.review_overdue";
 
 export interface Endpoint {
   id: string;

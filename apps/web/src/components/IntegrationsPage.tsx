@@ -15,7 +15,15 @@ const EVENTS: readonly { id: WebhookEvent; label: string }[] = [
   { id: "dsr.submitted", label: "Request received" },
   { id: "dsr.transitioned", label: "Request status changed" },
 ];
-const eventLabel = (id: WebhookEvent) => EVENTS.find((e) => e.id === id)?.label ?? id;
+/** Sent by a scheduled job, once each, so they reach a person who has not opened the dashboard. */
+const REMINDERS: readonly { id: WebhookEvent; label: string }[] = [
+  { id: "breach.deadline_soon", label: "Breach: Board deadline within 24 hours" },
+  { id: "breach.deadline_passed", label: "Breach: Board deadline passed" },
+  { id: "ropa.review_soon", label: "Record of processing: review due within 14 days" },
+  { id: "ropa.review_overdue", label: "Record of processing: review overdue" },
+];
+const ALL_EVENTS: readonly { id: WebhookEvent; label: string }[] = [...EVENTS, ...REMINDERS];
+const eventLabel = (id: WebhookEvent) => ALL_EVENTS.find((e) => e.id === id)?.label ?? id;
 
 type Confirm = { id: string; kind: "rotate" | "disable" | "enable" } | null;
 interface Shown {
@@ -128,7 +136,7 @@ export function IntegrationsPage() {
     if (!address.startsWith("https://")) return create.fail("Enter an address that starts with https://");
     if (chosen.length === 0) return create.fail("Choose at least one event.");
     await create.run(async () => {
-      const made = await api.createEndpoint(address, EVENTS.map((x) => x.id).filter((id) => chosen.includes(id)));
+      const made = await api.createEndpoint(address, ALL_EVENTS.map((x) => x.id).filter((id) => chosen.includes(id)));
       // The secret exists only in `shown`, in this component's memory, until it is acknowledged. The action keeps nothing.
       setShown({ url: made.url, secret: made.secret, rotated: false });
       setUrl("");
@@ -310,6 +318,21 @@ export function IntegrationsPage() {
           <fieldset className="flex flex-col gap-1">
             <legend className="font-medium">Send me</legend>
             {EVENTS.map((ev) => (
+              <label key={ev.id} className="flex min-h-11 items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="size-5"
+                  checked={chosen.includes(ev.id)}
+                  onChange={(e) => setChosen((c) => (e.target.checked ? [...c, ev.id] : c.filter((x) => x !== ev.id)))}
+                />
+                {ev.label}
+              </label>
+            ))}
+          </fieldset>
+          <fieldset className="flex flex-col gap-1">
+            <legend className="font-medium">Reminders</legend>
+            <p className="text-sm text-ink-soft">Each is sent once, by a scheduled job, when it becomes true, so they reach you without anyone opening this page.</p>
+            {REMINDERS.map((ev) => (
               <label key={ev.id} className="flex min-h-11 items-center gap-2">
                 <input
                   type="checkbox"
