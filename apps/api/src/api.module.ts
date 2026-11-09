@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { AuditController } from "./audit/audit.controller.js";
 import { AnchorJob } from "./audit/anchor-job.js";
+import { ReminderJob } from "./reminders/reminder-job.js";
 import { BreachService } from "./breaches/breach.service.js";
 import { RopaController } from "./ropa/ropa.controller.js";
 import { RopaService } from "./ropa/ropa.service.js";
@@ -42,6 +43,7 @@ import { NoticeService } from "./notices/notice.service.js";
     Database,
     AuditService,
     AnchorJob,
+    ReminderJob,
     BreachService,
     RopaService,
     PrincipalService,

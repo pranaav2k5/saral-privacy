@@ -1437,7 +1437,12 @@ components:
               field: { type: string }
               message: { type: string }
     WebhookEvent:
-      enum: [consent.granted, consent.withdrawn, dsr.submitted, dsr.transitioned]
+      description: >-
+        The first four are events that happen. The last four are reminders sent by a job (`pnpm --filter @saral/api reminders`, run at
+        least once an hour): `breach.deadline_soon` (the Board has not been told of an incident and its deadline is within 24 hours),
+        `breach.deadline_passed` (the deadline has passed), `ropa.review_soon` (the next review of the record of processing is within 14
+        days) and `ropa.review_overdue` (the review date has passed). Each reminder is sent once for each incident or version of the record.
+      enum: [consent.granted, consent.withdrawn, dsr.submitted, dsr.transitioned, breach.deadline_soon, breach.deadline_passed, ropa.review_soon, ropa.review_overdue]
     WebhookEndpoint:
       type: object
       required: [id, url, events, createdAt, disabledAt, disabledReason, previousSecretUntil]
@@ -1486,7 +1491,9 @@ components:
             For consent.granted: consentId, receiptId, noticeId, principalId (pseudonymous), collectionMethod, status
             and purposes (key and granted). For consent.withdrawn: consentId, noticeId, principalId, status, withdrawnAt.
             For dsr.submitted: requestId, type, state, dueAt, principalId. For dsr.transitioned: requestId, type, from, state,
-            dueAt. Never the person's text or contact.
+            dueAt. For breach.deadline_soon and breach.deadline_passed: breachId and boardDeadline. For ropa.review_soon and
+            ropa.review_overdue: ropaVersionId, version and nextReviewDue (a date). Never the person's text or contact, and
+            never the words of an incident or of the record.
     RightsType:
       enum: [access, correction, erasure, nomination, grievance]
     RightsState:

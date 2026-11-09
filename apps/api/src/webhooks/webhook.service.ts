@@ -9,8 +9,13 @@ import { SECRET_OVERLAP_MS, endpointSecret, formatSecret, previousSecretActive }
 import { URL_RESOLVER } from "./tokens.js";
 import { WebhookUrlError, assertWebhookUrl, type Resolver } from "./url-guard.js";
 
-export type WebhookEvent = "consent.granted" | "consent.withdrawn" | "dsr.submitted" | "dsr.transitioned";
-export const WEBHOOK_EVENTS: readonly WebhookEvent[] = ["consent.granted", "consent.withdrawn", "dsr.submitted", "dsr.transitioned"];
+export type WebhookEvent =
+  | "consent.granted" | "consent.withdrawn" | "dsr.submitted" | "dsr.transitioned"
+  | "breach.deadline_soon" | "breach.deadline_passed" | "ropa.review_soon" | "ropa.review_overdue";
+export const WEBHOOK_EVENTS: readonly WebhookEvent[] = [
+  "consent.granted", "consent.withdrawn", "dsr.submitted", "dsr.transitioned",
+  "breach.deadline_soon", "breach.deadline_passed", "ropa.review_soon", "ropa.review_overdue",
+];
 const MAX_ENDPOINTS = 10;
 /** An endpoint is disabled when this many of its most recent finished deliveries, with none delivered among them, all failed for good. */
 export const AUTO_DISABLE_AFTER = 10;
