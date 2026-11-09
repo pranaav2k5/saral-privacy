@@ -182,6 +182,27 @@ describe("why an endpoint was disabled", () => {
   });
 });
 
+describe("when a secret was rotated with the old one left working", () => {
+  test("is a column the application role may write with the new version, and the delivery worker may read", async () => {
+    await asApp(db, TENANT_A, async (c) => {
+      await c.query("UPDATE webhook_endpoints SET secret_version = 2, rotated_at = now() WHERE id = $1", [uid("a", 70)]);
+      expect((await c.query("SELECT secret_version, rotated_at IS NOT NULL AS has FROM webhook_endpoints WHERE id = $1", [uid("a", 70)])).rows[0]).toEqual({ secret_version: 2, has: true });
+    });
+    await db.owner.query("UPDATE webhook_endpoints SET secret_version = 2, rotated_at = now() WHERE id = $1", [uid("a", 70)]);
+    expect(await asWorker(async (c) => (await c.query("SELECT rotated_at IS NOT NULL AS has FROM webhook_endpoints WHERE id = $1", [uid("a", 70)])).rows[0])).toEqual({ has: true });
+    await db.owner.query("UPDATE webhook_endpoints SET secret_version = 1, rotated_at = NULL WHERE id = $1", [uid("a", 70)]);
+  });
+
+  test("cannot be set on a secret that has never been rotated", async () => {
+    await expect(asApp(db, TENANT_A, (c) => c.query("UPDATE webhook_endpoints SET rotated_at = now() WHERE id = $1", [uid("a", 70)]))).rejects.toThrow(/check constraint/);
+  });
+
+  test("is empty for an endpoint that was never rotated, and the application role still cannot change its address or events", async () => {
+    expect((await db.owner.query("SELECT rotated_at FROM webhook_endpoints WHERE id = $1", [uid("b", 70)])).rows[0]).toEqual({ rotated_at: null });
+    await expect(asApp(db, TENANT_A, (c) => c.query("UPDATE webhook_endpoints SET url = 'https://elsewhere.example/x' WHERE id = $1", [uid("a", 70)]))).rejects.toThrow(/permission denied/);
+  });
+});
+
 describe("the delivery worker role", () => {
   test("is not a superuser and does not bypass row-level security", async () => {
     await asWorker(async (c) => {

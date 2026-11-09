@@ -58,11 +58,25 @@ export class WebhookEndpointsController {
     return this.webhooks.redeliver(auth.tenantId, auth.actor, uuidParam(id, "id"), uuidParam(deliveryId, "deliveryId"));
   }
 
-  /** Issues a new signing secret, shown once. The old secret stops working at once. */
+  /**
+   * Issues a new signing secret, shown once. By default the old secret stops working at once. With `{ "overlap": true }` it keeps
+   * working alongside the new one for 24 hours (the answer says until when) so a receiver can be switched over.
+   */
   @Post(":id/rotate-secret")
   @HttpCode(200)
   @Scopes("tenant_admin")
-  rotate(@Auth() auth: AuthContext, @Param("id") id: string) {
-    return this.webhooks.rotate(auth.tenantId, auth.actor, uuidParam(id, "id"));
+  rotate(@Auth() auth: AuthContext, @Param("id") id: string, @Body() raw?: unknown) {
+    const body = raw === undefined ? {} : objectBody(raw);
+    for (const key of Object.keys(body)) if (key !== "overlap") throw bad(key, "is not part of the request");
+    if (body.overlap !== undefined && typeof body.overlap !== "boolean") throw bad("overlap", "must be true or false");
+    return this.webhooks.rotate(auth.tenantId, auth.actor, uuidParam(id, "id"), body.overlap === true);
+  }
+
+  /** Switches a disabled endpoint on again, with the secret it had. */
+  @Post(":id/enable")
+  @HttpCode(200)
+  @Scopes("tenant_admin")
+  enable(@Auth() auth: AuthContext, @Param("id") id: string) {
+    return this.webhooks.enable(auth.tenantId, auth.actor, uuidParam(id, "id"));
   }
 }

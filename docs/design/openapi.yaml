@@ -439,12 +439,26 @@ paths:
       operationId: rotateWebhookSecret
       summary: Issue a new signing secret
       description: >-
-        The new secret is shown only in this response. The old one stops working at once: later deliveries are signed
-        with the new secret. Rotating is an audit event. A disabled endpoint cannot be rotated.
+        The new secret is shown only in this response. By default the old one stops working at once: later deliveries are
+        signed with the new secret only, which is the right choice if the old one may have leaked. With `overlap: true`
+        the old secret keeps signing for 24 hours after the rotation, alongside the new one: every delivery then carries
+        two `v1=` signatures in `X-Saral-Signature`, the new secret's first, so a receiver can be switched over without
+        missing a delivery. Only the secret just before the current one is kept: a second rotation ends the overlap of
+        the first, and a rotation without `overlap` ends any overlap at once. Rotating is an audit event. A disabled
+        endpoint cannot be rotated.
       x-scopes: [tenant_admin]
       security: [{ apiKey: [] }]
       parameters:
         - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                overlap: { type: boolean, default: false, description: Keep the old secret working for 24 hours. }
       responses:
         "200":
           description: Rotated.
@@ -452,14 +466,49 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [id, secret]
+                required: [id, secret, previousSecretValidUntil]
                 properties:
                   id: { type: string, format: uuid }
                   secret: { type: string, pattern: '^whsec_[A-Za-z0-9_-]{43}$' }
+                  previousSecretValidUntil: { type: [string, "null"], format: date-time, description: When the old secret stops signing deliveries; null when it stopped at once. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/webhook-endpoints/{id}/enable:
+    post:
+      tags: [Webhooks]
+      operationId: enableWebhookEndpoint
+      summary: Switch a disabled endpoint on again
+      description: >-
+        For an endpoint that the administrator disabled or that Saral switched off after repeated failures. It keeps the
+        secret it had (rotate as well if the secret may have leaked). The address is checked again as for a new endpoint
+        (422 `invalid_url` if it no longer passes), and the cap of 10 active endpoints applies (409 `too_many_endpoints`).
+        An endpoint that is already on is 409 `already_enabled`. It is an audit event.
+      x-scopes: [tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: Switched on.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookEndpoint" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`already_enabled` or `too_many_endpoints`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The address no longer passes the checks (`invalid_url`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/webhook-endpoints/{id}/deliveries:
     get:
       tags: [Webhooks]
@@ -1391,7 +1440,7 @@ components:
       enum: [consent.granted, consent.withdrawn, dsr.submitted, dsr.transitioned]
     WebhookEndpoint:
       type: object
-      required: [id, url, events, createdAt, disabledAt, disabledReason]
+      required: [id, url, events, createdAt, disabledAt, disabledReason, previousSecretUntil]
       properties:
         id: { type: string, format: uuid }
         url: { type: string }
@@ -1403,6 +1452,7 @@ components:
         disabledReason:
           description: Null while the endpoint is active. `failures` when Saral disabled it; `admin` otherwise, including endpoints disabled before reasons were kept.
           enum: [admin, failures, null]
+        previousSecretUntil: { type: [string, "null"], format: date-time, description: While a rotation's old secret still signs deliveries alongside the new one, when that stops; otherwise null. }
     WebhookDeliveryRecord:
       type: object
       required: [id, eventType, state, attempts, createdAt, nextAttemptAt, deliveredAt, lastStatus, lastError]

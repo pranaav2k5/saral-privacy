@@ -1,6 +1,8 @@
+import { randomUUID as randomUuid } from "node:crypto";
 import { connect, uid } from "../db/helpers.js";
 import { PHONE, startApi, type Api } from "./harness.js";
 import { WebhookWorker } from "../../src/webhooks/worker.js";
+import { sha256Hex } from "@saral/audit-chain";
 import { endpointSecret, verifyWebhookSignature } from "../../src/webhooks/signature.js";
 
 let api: Api;
@@ -421,5 +423,254 @@ describe("the outbox and delivery", () => {
     await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES ($1, $2, 'https://w.example.org/x', '{consent.withdrawn}')", [id, api.A.id]);
     await api.grant(api.A, { identifier: "+919800000004" });
     expect((await rows("SELECT count(*)::int AS n FROM webhook_deliveries WHERE endpoint_id = $1", [id]))[0]?.n).toBe(0);
+  });
+});
+
+describe("rotating with the old secret left working for a while", () => {
+  const HOUR = 3_600_000;
+  const rotate = (token: string, id: string, body?: unknown) => {
+    const r = api.http().post(`/v1/webhook-endpoints/${id}/rotate-secret`).set(bearer(token));
+    return body === undefined ? r : r.send(body as object);
+  };
+  const make = async (name: string) => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.A.id]);
+    return (await register(api.A.admin, { url: `https://${name}.example.org/x`, events: ["consent.granted"] })).body as { id: string; secret: string };
+  };
+  let phone = 0;
+  /** Gives one consent, so one delivery is made to the endpoint, and returns what was sent to it. */
+  const delivery = async (name: string, when?: Date) => {
+    phone += 1;
+    await api.grant(api.A, { identifier: `+9198210${String(10000 + phone)}` });
+    // Taken after the consent is given, so the delivery it made is already due.
+    const at = when ?? new Date();
+    // The worker takes a limited batch for each organisation, oldest first, so the backlog of earlier tests may go first.
+    let call: { body: string; headers: Record<string, string> } | undefined;
+    for (let i = 0; i < 20 && call === undefined; i++) {
+      api.hooks.calls = [];
+      await worker.runOnce(at);
+      call = api.hooks.calls.find((c) => c.url === `https://${name}.example.org/x`);
+    }
+    if (call === undefined) throw new Error("no delivery was made to the endpoint");
+    const header = call.headers["X-Saral-Signature"] as string;
+    const secrets = (id: string) => (v: number) => verifyWebhookSignature(endpointSecret(api.keys.webhookKey(), id, v), header, call.body, Math.floor(at.getTime() / 1000));
+    return { header, signatures: header.split(",").filter((p) => p.startsWith("v1=")).length, checks: secrets };
+  };
+  const listed = async (id: string) => (await api.http().get("/v1/webhook-endpoints").set(bearer(api.A.admin))).body.find((e: { id: string }) => e.id === id) as { previousSecretUntil: string | null };
+
+  test("with overlap the new secret is shown, the answer says until when the old one works, and deliveries are signed with both", async () => {
+    const e = await make("overlap-on");
+    const before = Date.now();
+    const res = await rotate(api.A.admin, e.id, { overlap: true });
+    expect(res.status).toBe(200);
+    expect(res.body.secret).toBe(`whsec_${Buffer.from(endpointSecret(api.keys.webhookKey(), e.id, 2)).toString("base64url")}`);
+    const until = Date.parse(res.body.previousSecretValidUntil as string);
+    expect(until).toBeGreaterThanOrEqual(before + 24 * HOUR);
+    expect(until).toBeLessThanOrEqual(Date.now() + 24 * HOUR);
+    expect((await listed(e.id)).previousSecretUntil).toBe(res.body.previousSecretValidUntil);
+    const d = await delivery("overlap-on");
+    expect(d.signatures).toBe(2);
+    expect([d.checks(e.id)(2), d.checks(e.id)(1), d.checks(e.id)(3)]).toEqual([true, true, false]);
+    expect(d.header.split(",")[1]).toBe(`v1=${d.header.split("v1=")[1]?.split(",")[0] as string}`);
+  });
+
+  test("without overlap (the default) the old secret stops at once, the answer and the list say there is no previous secret, and one signature is sent", async () => {
+    const e = await make("overlap-off");
+    for (const body of [undefined, {}, { overlap: false }]) {
+      const res = await rotate(api.A.admin, e.id, body);
+      expect(res.status).toBe(200);
+      expect(res.body.previousSecretValidUntil).toBeNull();
+    }
+    expect((await listed(e.id)).previousSecretUntil).toBeNull();
+    const d = await delivery("overlap-off");
+    expect(d.signatures).toBe(1);
+    expect([d.checks(e.id)(4), d.checks(e.id)(3)]).toEqual([true, false]);
+  });
+
+  test("the old secret works for exactly 24 hours after the rotation: one second before, both sign; at 24 hours, only the new one", async () => {
+    const e = await make("overlap-edge");
+    await rotate(api.A.admin, e.id, { overlap: true });
+    const T = Date.parse("2030-01-01T10:00:00Z");
+    await api.db.owner.query("UPDATE webhook_endpoints SET rotated_at = $2 WHERE id = $1", [e.id, new Date(T).toISOString()]);
+    const inside = await delivery("overlap-edge", new Date(T + 24 * HOUR - 1000));
+    expect(inside.signatures).toBe(2);
+    expect([inside.checks(e.id)(2), inside.checks(e.id)(1)]).toEqual([true, true]);
+    const outside = await delivery("overlap-edge", new Date(T + 24 * HOUR));
+    expect(outside.signatures).toBe(1);
+    expect([outside.checks(e.id)(2), outside.checks(e.id)(1)]).toEqual([true, false]);
+  });
+
+  test("once the 24 hours are over the list no longer shows a previous secret", async () => {
+    const e = await make("overlap-over");
+    await rotate(api.A.admin, e.id, { overlap: true });
+    await api.db.owner.query("UPDATE webhook_endpoints SET rotated_at = now() - interval '25 hours' WHERE id = $1", [e.id]);
+    expect((await listed(e.id)).previousSecretUntil).toBeNull();
+  });
+
+  test("only the secret just before the current one keeps working: after two rotations the first is gone", async () => {
+    const e = await make("overlap-twice");
+    await rotate(api.A.admin, e.id, { overlap: true });
+    await rotate(api.A.admin, e.id, { overlap: true });
+    const d = await delivery("overlap-twice");
+    expect(d.signatures).toBe(2);
+    expect([d.checks(e.id)(3), d.checks(e.id)(2), d.checks(e.id)(1)]).toEqual([true, true, false]);
+  });
+
+  test("rotating again without overlap cuts the old secret off at once, even in the middle of an overlap", async () => {
+    const e = await make("overlap-cut");
+    await rotate(api.A.admin, e.id, { overlap: true });
+    await rotate(api.A.admin, e.id, { overlap: false });
+    expect((await listed(e.id)).previousSecretUntil).toBeNull();
+    const d = await delivery("overlap-cut");
+    expect(d.signatures).toBe(1);
+    expect([d.checks(e.id)(3), d.checks(e.id)(2)]).toEqual([true, false]);
+  });
+
+  test("an endpoint never rotated has no previous secret and one signature", async () => {
+    const e = await make("overlap-never");
+    expect((await listed(e.id)).previousSecretUntil).toBeNull();
+    expect((await delivery("overlap-never")).signatures).toBe(1);
+  });
+
+  test.each([
+    ["a text", { overlap: "yes" }, "overlap"],
+    ["a number", { overlap: 1 }, "overlap"],
+    ["null", { overlap: null }, "overlap"],
+    ["a field that is not part of the request", { overlap: true, keepFor: 1 }, "keepFor"],
+  ])("%s as the choice is a 400 naming the field, and the secret is not rotated", async (_n, body, field) => {
+    const e = await make(`overlap-bad-${field}`);
+    const res = await rotate(api.A.admin, e.id, body);
+    expect({ status: res.status, field: res.body.field }).toEqual({ status: 400, field });
+    expect((await rows("SELECT secret_version FROM webhook_endpoints WHERE id = $1", [e.id]))[0]?.secret_version).toBe(1);
+  });
+
+  test("a body that is not an object is a 400", async () => {
+    const e = await make("overlap-array");
+    expect((await rotate(api.A.admin, e.id, [])).status).toBe(400);
+  });
+
+  test("each rotation is an audit event whose hash says whether the old secret was left working", async () => {
+    const e = await make("overlap-audit");
+    const url = "https://overlap-audit.example.org/x";
+    const hash = (version: number, overlap: boolean) => sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, api.A.id, e.id, url, ["consent.granted"], version, overlap]));
+    await rotate(api.A.admin, e.id, { overlap: true });
+    await rotate(api.A.admin, e.id);
+    const events = await rows("SELECT payload_sha256 FROM consent_audit_log WHERE tenant_id = $1 AND ref_id = $2 AND action = 'webhook.endpoint_rotated' ORDER BY seq_no", [api.A.id, e.id]);
+    expect(events.map((x) => x.payload_sha256)).toEqual([hash(2, true), hash(3, false)]);
+  });
+
+  test("only the owning tenant's administrator may choose it, and a disabled endpoint cannot be rotated", async () => {
+    const e = await make("overlap-scope");
+    expect((await rotate(api.B.admin, e.id, { overlap: true })).status).toBe(404);
+    for (const token of [api.A.pk, api.A.dpo, api.A.auditor]) expect((await rotate(token, e.id, { overlap: true })).status).toBe(403);
+    await api.http().delete(`/v1/webhook-endpoints/${e.id}`).set(bearer(api.A.admin));
+    expect((await rotate(api.A.admin, e.id, { overlap: true })).status).toBe(404);
+  });
+});
+
+describe("switching an endpoint on again", () => {
+  const enable = (token: string, id: string) => api.http().post(`/v1/webhook-endpoints/${id}/enable`).set(bearer(token));
+  const disableByAdmin = (id: string) => api.http().delete(`/v1/webhook-endpoints/${id}`).set(bearer(api.A.admin));
+  const clearA = () => api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.A.id]);
+  const make = async (name: string) => (await register(api.A.admin, { url: `https://${name}.example.org/x`, events: ["consent.granted"] })).body as { id: string };
+  let phone = 0;
+
+  test("an endpoint the administrator disabled is on again with the same secret, is listed as enabled, gets later events, and it is audited", async () => {
+    await clearA();
+    const e = await make("enable-admin");
+    await disableByAdmin(e.id);
+    const res = await enable(api.A.admin, e.id);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: e.id, url: "https://enable-admin.example.org/x", events: ["consent.granted"], disabledAt: null, disabledReason: null });
+    const row = (await api.http().get("/v1/webhook-endpoints").set(bearer(api.A.admin))).body.find((x: { id: string }) => x.id === e.id);
+    expect(row).toMatchObject({ disabledAt: null, disabledReason: null });
+    phone += 1;
+    await api.grant(api.A, { identifier: `+9198220${String(10000 + phone)}` });
+    api.hooks.calls = [];
+    await worker.runOnce(new Date());
+    const call = api.hooks.calls.find((c) => c.url === "https://enable-admin.example.org/x") as { body: string; headers: Record<string, string> };
+    expect(call).toBeDefined();
+    expect(verifyWebhookSignature(endpointSecret(api.keys.webhookKey(), e.id, 1), call.headers["X-Saral-Signature"] as string, call.body, Math.floor(Date.now() / 1000))).toBe(true);
+    const expected = sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, api.A.id, e.id, "https://enable-admin.example.org/x", ["consent.granted"], 1]));
+    const events = await rows("SELECT payload_sha256 FROM consent_audit_log WHERE tenant_id = $1 AND ref_id = $2 AND action = 'webhook.endpoint_enabled'", [api.A.id, e.id]);
+    expect(events).toEqual([{ payload_sha256: expected }]);
+  });
+
+  test("an endpoint Saral switched off after repeated failures can be switched on again, and then reads as enabled", async () => {
+    await clearA();
+    const e = await make("enable-failures");
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now(), disabled_reason = 'failures' WHERE id = $1", [e.id]);
+    expect((await enable(api.A.admin, e.id)).status).toBe(200);
+    expect((await rows("SELECT disabled_at, disabled_reason FROM webhook_endpoints WHERE id = $1", [e.id]))[0]).toEqual({ disabled_at: null, disabled_reason: null });
+  });
+
+  test("an endpoint that is already on is a 409, and it is not audited again", async () => {
+    await clearA();
+    const e = await make("enable-already");
+    const res = await enable(api.A.admin, e.id);
+    expect({ status: res.status, error: res.body.error }).toEqual({ status: 409, error: "already_enabled" });
+    expect(await rows("SELECT 1 FROM consent_audit_log WHERE tenant_id = $1 AND ref_id = $2 AND action = 'webhook.endpoint_enabled'", [api.A.id, e.id])).toHaveLength(0);
+  });
+
+  test("another organisation's endpoint is 404, a bad id is 400, other roles get 403, and no one gets 401", async () => {
+    await clearA();
+    const e = await make("enable-scope");
+    await disableByAdmin(e.id);
+    expect((await enable(api.B.admin, e.id)).status).toBe(404);
+    expect((await enable(api.A.admin, randomUuid())).status).toBe(404);
+    expect((await enable(api.A.admin, "nope")).status).toBe(400);
+    for (const token of [api.A.pk, api.A.dpo, api.A.auditor, api.A.server]) expect((await enable(token, e.id)).status).toBe(403);
+    expect((await api.http().post(`/v1/webhook-endpoints/${e.id}/enable`)).status).toBe(401);
+    expect((await rows("SELECT disabled_at IS NULL AS on FROM webhook_endpoints WHERE id = $1", [e.id]))[0]).toEqual({ on: false });
+  });
+
+  test("with ten endpoints already on it is refused with 409, nothing changes, and a free place makes it work", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]);
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) ids.push(((await register(api.B.admin, { url: `https://cap${String(i)}.example.org/x`, events: ["consent.granted"] })).body as { id: string }).id);
+    const extra = ((await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events, disabled_at) VALUES (gen_random_uuid(), $1, 'https://capx.example.org/x', '{consent.granted}', now()) RETURNING id", [api.B.id])).rows[0] as { id: string }).id;
+    const full = await enable(api.B.admin, extra);
+    expect({ status: full.status, error: full.body.error }).toEqual({ status: 409, error: "too_many_endpoints" });
+    expect((await rows("SELECT disabled_at IS NULL AS on FROM webhook_endpoints WHERE id = $1", [extra]))[0]).toEqual({ on: false });
+    await api.http().delete(`/v1/webhook-endpoints/${ids[0] as string}`).set(bearer(api.B.admin));
+    expect((await enable(api.B.admin, extra)).status).toBe(200);
+  });
+
+  test("several switched on at once cannot go past ten: the count and the change are serialised", async () => {
+    await api.db.owner.query("UPDATE webhook_endpoints SET disabled_at = now() WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]);
+    for (let i = 0; i < 8; i++) await register(api.B.admin, { url: `https://race${String(i)}.example.org/x`, events: ["consent.granted"] });
+    const off: string[] = [];
+    for (let i = 0; i < 4; i++) off.push(((await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events, disabled_at) VALUES (gen_random_uuid(), $1, $2, '{consent.granted}', now()) RETURNING id", [api.B.id, `https://raceoff${String(i)}.example.org/x`])).rows[0] as { id: string }).id);
+    const results = await Promise.all(off.map((id) => enable(api.B.admin, id)));
+    expect(results.map((r) => r.status).sort()).toEqual([200, 200, 409, 409]);
+    expect((await rows("SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1 AND disabled_at IS NULL", [api.B.id]))[0]?.n).toBe(10);
+  });
+
+  test("the address is checked again: one that now points at a private address is refused with 422 and stays off", async () => {
+    await clearA();
+    const id = ((await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events, disabled_at) VALUES (gen_random_uuid(), $1, 'https://internal.example/x', '{consent.granted}', now()) RETURNING id", [api.A.id])).rows[0] as { id: string }).id;
+    const res = await enable(api.A.admin, id);
+    expect({ status: res.status, error: res.body.error }).toEqual({ status: 422, error: "invalid_url" });
+    expect((await rows("SELECT disabled_at IS NULL AS on FROM webhook_endpoints WHERE id = $1", [id]))[0]).toEqual({ on: false });
+  });
+
+  test("an endpoint that is already on is a 409 even when its address would no longer pass, because there is nothing to switch on", async () => {
+    await clearA();
+    const id = ((await api.db.owner.query("INSERT INTO webhook_endpoints (id, tenant_id, url, events) VALUES (gen_random_uuid(), $1, 'https://internal.example/x', '{consent.granted}') RETURNING id", [api.A.id])).rows[0] as { id: string }).id;
+    const res = await enable(api.A.admin, id);
+    expect({ status: res.status, error: res.body.error }).toEqual({ status: 409, error: "already_enabled" });
+  });
+
+  test("a failed delivery of an endpoint that was off can be sent again once it is on, which was refused while it was off", async () => {
+    await clearA();
+    const e = await make("enable-redeliver");
+    phone += 1;
+    await api.grant(api.A, { identifier: `+9198230${String(10000 + phone)}` });
+    await api.db.owner.query("UPDATE webhook_deliveries SET state = 'failed', attempts = 15, last_error = 'HTTP 500' WHERE endpoint_id = $1", [e.id]);
+    const failed = (await rows("SELECT id FROM webhook_deliveries WHERE endpoint_id = $1 AND state = 'failed'", [e.id]))[0] as { id: string };
+    expect(failed).toBeDefined();
+    await disableByAdmin(e.id);
+    expect((await api.http().post(`/v1/webhook-endpoints/${e.id}/deliveries/${failed.id}/redeliver`).set(bearer(api.A.admin))).status).toBe(409);
+    await enable(api.A.admin, e.id);
+    expect((await api.http().post(`/v1/webhook-endpoints/${e.id}/deliveries/${failed.id}/redeliver`).set(bearer(api.A.admin))).status).toBe(200);
   });
 });

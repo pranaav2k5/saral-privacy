@@ -3,7 +3,7 @@ import type pg from "pg";
 import { Database } from "../db/database.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
 import { MAX_ATTEMPTS, nextAttemptDelaySeconds } from "./schedule.js";
-import { endpointSecret, signWebhook } from "./signature.js";
+import { endpointSecret, previousSecretActive, signWebhook } from "./signature.js";
 import { WEBHOOK_HTTP, type WebhookHttp } from "./tokens.js";
 import { WebhookService } from "./webhook.service.js";
 
@@ -87,7 +87,7 @@ export class WebhookWorker {
     if (claimed.length === 0) return result;
 
     const endpoints = await this.db.asWorker(async (c) => {
-      const r = await c.query<{ id: string; url: string; secret_version: number }>("SELECT id, url, secret_version FROM webhook_endpoints WHERE id = ANY($1)", [[...new Set(claimed.map((d) => d.endpoint_id))]]);
+      const r = await c.query<{ id: string; url: string; secret_version: number; rotated_at: Date | null }>("SELECT id, url, secret_version, rotated_at FROM webhook_endpoints WHERE id = ANY($1)", [[...new Set(claimed.map((d) => d.endpoint_id))]]);
       return new Map(r.rows.map((e) => [e.id, e]));
     });
 
@@ -134,13 +134,15 @@ export class WebhookWorker {
     );
   }
 
-  private async deliver(d: Claimed, endpoint: { url: string; secret_version: number } | undefined, now: Date): Promise<"delivered" | "retried" | "failed"> {
+  private async deliver(d: Claimed, endpoint: { url: string; secret_version: number; rotated_at: Date | null } | undefined, now: Date): Promise<"delivered" | "retried" | "failed"> {
     let status: number | null = null;
     let error: string | null = null;
     try {
       if (endpoint === undefined) throw new Error("endpoint not found");
       const body = JSON.stringify({ id: d.id, type: d.event_type, createdAt: d.created_at.toISOString(), data: d.payload });
       const secret = endpointSecret(this.keys.webhookKey(), d.endpoint_id, endpoint.secret_version);
+      // While a rotation's overlap lasts, the secret before this one signs too, so a receiver that has not switched over still verifies.
+      const previous = previousSecretActive(endpoint.secret_version, endpoint.rotated_at, now) ? endpointSecret(this.keys.webhookKey(), d.endpoint_id, endpoint.secret_version - 1) : undefined;
       const res = await this.http.post({
         url: endpoint.url,
         headers: {
@@ -148,7 +150,7 @@ export class WebhookWorker {
           "User-Agent": "Saral-Webhooks/1",
           "X-Saral-Event": d.event_type,
           "Idempotency-Key": d.id,
-          "X-Saral-Signature": signWebhook(secret, Math.floor(now.getTime() / 1000), body),
+          "X-Saral-Signature": signWebhook(secret, Math.floor(now.getTime() / 1000), body, previous),
         },
         body,
       });

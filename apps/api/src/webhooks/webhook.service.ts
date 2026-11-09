@@ -5,7 +5,7 @@ import type pg from "pg";
 import { AuditService } from "../audit/audit.service.js";
 import { Database } from "../db/database.js";
 import { KEY_PROVIDER, type KeyProvider } from "../keys/key-provider.js";
-import { endpointSecret, formatSecret } from "./signature.js";
+import { SECRET_OVERLAP_MS, endpointSecret, formatSecret, previousSecretActive } from "./signature.js";
 import { URL_RESOLVER } from "./tokens.js";
 import { WebhookUrlError, assertWebhookUrl, type Resolver } from "./url-guard.js";
 
@@ -27,6 +27,8 @@ export interface EndpointView {
   disabledAt: string | null;
   /** `admin` when the administrator disabled it (also for endpoints disabled before reasons were kept), `failures` when Saral did. */
   disabledReason: "admin" | "failures" | null;
+  /** While a rotated secret's predecessor still signs deliveries as well, when that stops; otherwise null. */
+  previousSecretUntil: string | null;
 }
 
 /** What the delivery log shows. The payload is left out on purpose: it is not needed to understand what happened. */
@@ -41,6 +43,27 @@ export interface DeliveryView {
   deliveredAt: string | null;
   lastStatus: number | null;
   lastError: string | null;
+}
+
+type EndpointRow = {
+  id: string;
+  url: string;
+  events: WebhookEvent[];
+  created_at: Date;
+  disabled_at: Date | null;
+  disabled_reason: "admin" | "failures" | null;
+  secret_version: number;
+  rotated_at: Date | null;
+};
+
+function endpointView(e: EndpointRow, now: Date): EndpointView {
+  return {
+    id: e.id, url: e.url, events: e.events, createdAt: e.created_at.toISOString(),
+    disabledAt: e.disabled_at ? e.disabled_at.toISOString() : null,
+    // Endpoints disabled before reasons were kept have none recorded, and were disabled by their administrator.
+    disabledReason: e.disabled_at === null ? null : (e.disabled_reason ?? "admin"),
+    previousSecretUntil: e.rotated_at !== null && previousSecretActive(e.secret_version, e.rotated_at, now) ? new Date(e.rotated_at.getTime() + SECRET_OVERLAP_MS).toISOString() : null,
+  };
 }
 
 @Injectable()
@@ -82,7 +105,7 @@ export class WebhookService {
         actorType: "system", actorId: actor, action: "webhook.endpoint_created", refTable: "webhook_endpoints", refId: id,
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, url, [...events].sort(), 1])),
       });
-      return { id, url, events, createdAt: row.created_at.toISOString(), disabledAt: null, disabledReason: null, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, 1)) };
+      return { id, url, events, createdAt: row.created_at.toISOString(), disabledAt: null, disabledReason: null, previousSecretUntil: null, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, 1)) };
     });
   }
 
@@ -101,31 +124,70 @@ export class WebhookService {
     });
   }
 
-  /** Replaces the signing secret. The new one is shown once; the old one stops working at once (later deliveries are signed with the new one). */
-  async rotate(tenantId: string, actor: string, id: string): Promise<{ id: string; secret: string }> {
+  /**
+   * Replaces the signing secret. The new one is shown once. By default the old one stops working at once (later deliveries are signed
+   * with the new one only), which is what to choose if it has leaked. With `overlap` the old one keeps signing alongside the new one for
+   * 24 hours, so a receiver can be switched over without missing a delivery. Only the secret just before the current one is kept, so
+   * a second rotation ends the overlap of the first, and a rotation without `overlap` ends any overlap at once.
+   */
+  async rotate(tenantId: string, actor: string, id: string, overlap = false): Promise<{ id: string; secret: string; previousSecretValidUntil: string | null }> {
     return this.db.inScope({ tenantId }, async (c) => {
       await c.query("SELECT audit_append_lock($1)", [tenantId]);
-      const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number }>(
-        "UPDATE webhook_endpoints SET secret_version = secret_version + 1 WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version", [id]);
+      const r = await c.query<{ url: string; events: WebhookEvent[]; secret_version: number; rotated_at: Date | null }>(
+        "UPDATE webhook_endpoints SET secret_version = secret_version + 1, rotated_at = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE id = $1 AND disabled_at IS NULL RETURNING url, events, secret_version, rotated_at",
+        [id, overlap]);
       const e = r.rows[0];
       if (e === undefined) throw new NotFoundException({ error: "not_found", message: "endpoint not found" });
       await this.audit.append(c, tenantId, {
         actorType: "system", actorId: actor, action: "webhook.endpoint_rotated", refTable: "webhook_endpoints", refId: id,
+        payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, e.url, [...e.events].sort(), e.secret_version, overlap])),
+      });
+      return {
+        id, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, e.secret_version)),
+        previousSecretValidUntil: e.rotated_at === null ? null : new Date(e.rotated_at.getTime() + SECRET_OVERLAP_MS).toISOString(),
+      };
+    });
+  }
+
+  /**
+   * Switches a disabled endpoint on again, whether the administrator or Saral disabled it. The secret is the one it had (disabling and
+   * enabling do not change it; rotate as well if it may have leaked). The address is checked again, since what a name points at can
+   * change, and the cap of ten active endpoints is counted under the tenant lock as for a new endpoint.
+   */
+  async enable(tenantId: string, actor: string, id: string): Promise<EndpointView> {
+    const url = await this.db.inScope({ tenantId }, async (c) => {
+      const e = await this.requireEndpoint(c, id);
+      if (e.disabled_at === null) throw new ConflictException({ error: "already_enabled", message: "this endpoint is already on" });
+      return e.url;
+    });
+    try {
+      await assertWebhookUrl(url, this.resolver);
+    } catch (e) {
+      if (e instanceof WebhookUrlError) throw new UnprocessableEntityException({ error: "invalid_url", message: e.message });
+      throw e;
+    }
+    return this.db.inScope({ tenantId }, async (c) => {
+      await c.query("SELECT audit_append_lock($1)", [tenantId]);
+      const count = (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM webhook_endpoints WHERE disabled_at IS NULL")).rows[0]?.n ?? 0;
+      if (count >= MAX_ENDPOINTS) throw new ConflictException({ error: "too_many_endpoints", message: `a tenant may have at most ${String(MAX_ENDPOINTS)} active endpoints` });
+      const r = await c.query<EndpointRow>(
+        `UPDATE webhook_endpoints SET disabled_at = NULL, disabled_reason = NULL WHERE id = $1 AND disabled_at IS NOT NULL
+         RETURNING id, url, events, created_at, disabled_at, disabled_reason, secret_version, rotated_at`, [id]);
+      const e = r.rows[0];
+      if (e === undefined) throw new ConflictException({ error: "already_enabled", message: "this endpoint is already on" });
+      await this.audit.append(c, tenantId, {
+        actorType: "system", actorId: actor, action: "webhook.endpoint_enabled", refTable: "webhook_endpoints", refId: id,
         payloadSha256: sha256Hex(JSON.stringify(["saral.webhook_endpoint", 1, tenantId, id, e.url, [...e.events].sort(), e.secret_version])),
       });
-      return { id, secret: formatSecret(endpointSecret(this.keys.webhookKey(), id, e.secret_version)) };
+      return endpointView(e, new Date());
     });
   }
 
   async list(tenantId: string): Promise<EndpointView[]> {
     return this.db.inScope({ tenantId }, async (c) => {
-      const r = await c.query<{ id: string; url: string; events: WebhookEvent[]; created_at: Date; disabled_at: Date | null; disabled_reason: "admin" | "failures" | null }>("SELECT id, url, events, created_at, disabled_at, disabled_reason FROM webhook_endpoints ORDER BY created_at");
-      return r.rows.map((e) => ({
-        id: e.id, url: e.url, events: e.events, createdAt: e.created_at.toISOString(),
-        disabledAt: e.disabled_at ? e.disabled_at.toISOString() : null,
-        // Endpoints disabled before reasons were kept have none recorded, and were disabled by their administrator.
-        disabledReason: e.disabled_at === null ? null : (e.disabled_reason ?? "admin"),
-      }));
+      const r = await c.query<EndpointRow>("SELECT id, url, events, created_at, disabled_at, disabled_reason, secret_version, rotated_at FROM webhook_endpoints ORDER BY created_at, id");
+      const now = new Date();
+      return r.rows.map((e) => endpointView(e, now));
     });
   }
 
@@ -177,7 +239,7 @@ export class WebhookService {
   /**
    * Called by the worker when a delivery has just failed for good. If the endpoint's last ten finished deliveries have all
    * failed (a delivered one among them shows it still works for some events), it is disabled, for the same reason an administrator
-   * would: nothing more is sent, and its waiting events are closed. It cannot be switched on again; register it anew (a new secret).
+   * would: nothing more is sent, and its waiting events are closed. The administrator can switch it on again.
    */
   async disableIfFailing(tenantId: string, endpointId: string): Promise<boolean> {
     return this.db.inScope({ tenantId }, async (c) => {
