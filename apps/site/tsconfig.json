@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
+    "target": "ES2020",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
@@ -20,7 +20,8 @@
     ],
     "paths": {
       "@/*": ["./src/*"],
-      "@saral/notice": ["../../packages/notice/src/index.ts"]
+      "@saral/notice": ["../../packages/notice/src/index.ts"],
+      "@saral/schemas": ["../../packages/schemas/src/index.ts"]
     }
   },
   "include": [
