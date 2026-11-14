@@ -16,12 +16,14 @@ export const NAV: Record<Role, readonly { href: string; label: string }[]> = {
   dpo: [
     { href: "/", label: "Overview" },
     { href: "/requests", label: "Requests" },
+    { href: "/breaches", label: "Breaches" },
     { href: "/audit", label: "Audit" },
     { href: "/account", label: "Account" },
   ],
   tenant_admin: [
     { href: "/", label: "Overview" },
     { href: "/notices", label: "Notices" },
+    { href: "/breaches", label: "Breaches" },
     { href: "/audit", label: "Audit" },
     { href: "/integrations", label: "Integrations" },
     { href: "/account", label: "Account" },

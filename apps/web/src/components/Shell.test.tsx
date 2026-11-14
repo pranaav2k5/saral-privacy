@@ -13,14 +13,14 @@ beforeEach(() => {
   mockPath = "/";
 });
 
-test("a data protection officer sees Overview, Requests, Audit and Account, and not Notices or Integrations", () => {
+test("a data protection officer sees Overview, Requests, Breaches, Audit and Account, and not Notices or Integrations", () => {
   renderScreen(<AppFrame><p>page</p></AppFrame>, { role: "dpo" });
-  expect(links()).toEqual([["Skip to content", "#main"], ["Overview", "/"], ["Requests", "/requests"], ["Audit", "/audit"], ["Account", "/account"]]);
+  expect(links()).toEqual([["Skip to content", "#main"], ["Overview", "/"], ["Requests", "/requests"], ["Breaches", "/breaches"], ["Audit", "/audit"], ["Account", "/account"]]);
 });
 
-test("an administrator sees Overview, Notices, Audit, Integrations and Account, and not Requests", () => {
+test("an administrator sees Overview, Notices, Breaches, Audit, Integrations and Account, and not Requests", () => {
   renderScreen(<AppFrame><p>page</p></AppFrame>, { role: "tenant_admin" });
-  expect(links()).toEqual([["Skip to content", "#main"], ["Overview", "/"], ["Notices", "/notices"], ["Audit", "/audit"], ["Integrations", "/integrations"], ["Account", "/account"]]);
+  expect(links()).toEqual([["Skip to content", "#main"], ["Overview", "/"], ["Notices", "/notices"], ["Breaches", "/breaches"], ["Audit", "/audit"], ["Integrations", "/integrations"], ["Account", "/account"]]);
 });
 
 test("the page being shown is marked as current, and only it", () => {

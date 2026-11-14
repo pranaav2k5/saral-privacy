@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { AuditController } from "./audit/audit.controller.js";
 import { AnchorJob } from "./audit/anchor-job.js";
+import { BreachService } from "./breaches/breach.service.js";
+import { BreachesController } from "./breaches/breaches.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { AuthGuard } from "./auth/auth.guard.js";
 import { DEFAULT_LIMITS, RATE_LIMITS, RATE_LIMIT_CLOCK } from "./ratelimit/policies.js";
@@ -29,13 +31,14 @@ import { WebhookWorker } from "./webhooks/worker.js";
 import { NoticeService } from "./notices/notice.service.js";
 
 @Module({
-  controllers: [AuthController, DsrController, ConsentsController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
+  controllers: [AuthController, DsrController, ConsentsController, BreachesController, NoticesController, JwksController, AuditController, WebhookEndpointsController],
   providers: [
     { provide: SETTINGS, useFactory: () => readSettings(process.env) },
     { provide: KEY_PROVIDER, useFactory: (settings: Settings) => createKeyProvider(settings), inject: [SETTINGS] },
     Database,
     AuditService,
     AnchorJob,
+    BreachService,
     PrincipalService,
     ConsentService,
     NoticeService,

@@ -466,6 +466,250 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /v1/breaches:
+    post:
+      tags: [Breaches]
+      operationId: reportBreach
+      summary: Report a personal data breach
+      description: >-
+        For the officer or the administrator. The record starts as `reported`. The Board has to be told within 72 hours of the
+        time the breach was found (`boardDeadline`); that period is the figure the plan cites for Rule 7 and has not been confirmed
+        against the Rules, which the lawyer advisor must do before it is shown to customers as advice. The free text can mention
+        people, so audit entries hold a hash of the content and never the words. The record is never deleted.
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachReport" }
+      responses:
+        "201":
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      tags: [Breaches]
+      operationId: listBreaches
+      summary: The organisation's incidents
+      description: Newest discovery first, at most 100.
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      responses:
+        "200":
+          description: The incidents.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Breach" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/breaches/{id}:
+    get:
+      tags: [Breaches]
+      operationId: getBreach
+      summary: One incident
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Breaches]
+      operationId: updateBreach
+      summary: Correct a report
+      description: >-
+        Any of the report's fields, at least one; `null` clears the time it happened or the number of people. Only while the incident is
+        `reported`: after sign-off it answers 409 `locked`. It is an audit event.
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachReport" }
+      responses:
+        "200":
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`locked`: the incident has been signed off."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/breaches/{id}/drafts:
+    get:
+      tags: [Breaches]
+      operationId: getBreachDrafts
+      summary: The drafts for the Board and for the affected people
+      description: >-
+        Plain text written from the incident and the organisation's profile, each starting with a warning that it is a draft nobody has
+        reviewed. Saral sends nothing to the Board or to anyone. 422 `incomplete_setup` when the profile does not say who the controller is.
+      x-scopes: [dpo, tenant_admin]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      responses:
+        "200":
+          description: The drafts.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BreachDrafts" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: "`incomplete_setup`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/breaches/{id}/sign-off:
+    post:
+      tags: [Breaches]
+      operationId: signOffBreach
+      summary: The officer signs off the drafts
+      description: >-
+        The officer's word, given for exactly the drafts they read: the body carries the two hashes that came with the drafts, and if the drafts are now different (the report was corrected after they were opened) the answer is 409 `drafts_changed` and nothing is signed. Otherwise it records who and when, and the hash of the two drafts (so it can be shown later what was signed), and the incident can no longer be changed. Officer only. An audit event. Once: 409 `illegal_transition` otherwise.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachSignOff" }
+      responses:
+        "200":
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`illegal_transition`, or `drafts_changed`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/breaches/{id}/board-notified:
+    post:
+      tags: [Breaches]
+      operationId: recordBoardNotified
+      summary: Record that the Board was told
+      description: >-
+        After sign-off. The time it was told (not before the breach was found, not in the future) and the reference the Board gave. `boardNotifiedLate` says whether it was after the deadline. Officer only. An audit event.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachBoardNotified" }
+      responses:
+        "200":
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`illegal_transition`: not signed off, or already recorded."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/breaches/{id}/principals-notified:
+    post:
+      tags: [Breaches]
+      operationId: recordPrincipalsNotified
+      summary: Record that the affected people were told
+      description: >-
+        Once, after sign-off, before or after the Board. How they were told and how many (zero if nobody was affected). Officer only. An audit event.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachPrincipalsNotified" }
+      responses:
+        "200":
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`illegal_transition` or `already_recorded`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/breaches/{id}/close:
+    post:
+      tags: [Breaches]
+      operationId: closeBreach
+      summary: Close the incident
+      description: >-
+        After the Board was told and the affected people were told (409 `principals_not_notified` otherwise), with a closing note. Final. Officer only. An audit event.
+      x-scopes: [dpo]
+      security: [{ apiKey: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BreachClose" }
+      responses:
+        "200":
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Breach" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`illegal_transition` or `principals_not_notified`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/dsr:
     post:
       tags: [Rights requests]
@@ -1083,6 +1327,99 @@ components:
         entryHash: { type: string, pattern: '^[0-9a-f]{64}$' }
         canonicalSchemaVersion: { type: integer }
         hmacSchemaVersion: { type: integer }
+    BreachReport:
+      type: object
+      description: The fields of the incident form. All but `occurredAt` and `approxPrincipalsAffected` are required to report; a correction sends any of them.
+      additionalProperties: false
+      required: [title, description, discoveredAt, nature, dataCategories, likelyConsequences, measuresTaken]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, minLength: 1, maxLength: 4000 }
+        discoveredAt: { type: string, format: date-time, description: When the organisation found out. Not in the future, not more than ten years ago. }
+        occurredAt: { type: [string, "null"], format: date-time, description: When it happened, if known. Not after `discoveredAt`. }
+        nature:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items: { enum: [confidentiality, integrity, availability] }
+        dataCategories:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 100 }
+        approxPrincipalsAffected: { type: [integer, "null"], minimum: 0, maximum: 1000000000 }
+        likelyConsequences: { type: string, minLength: 1, maxLength: 2000 }
+        measuresTaken: { type: string, minLength: 1, maxLength: 2000 }
+    BreachBoardNotified:
+      type: object
+      additionalProperties: false
+      required: [notifiedAt, reference]
+      properties:
+        notifiedAt: { type: string, format: date-time }
+        reference: { type: string, minLength: 1, maxLength: 200 }
+    BreachPrincipalsNotified:
+      type: object
+      additionalProperties: false
+      required: [how, count]
+      properties:
+        how: { type: string, minLength: 1, maxLength: 1000 }
+        count: { type: integer, minimum: 0, maximum: 1000000000 }
+    BreachClose:
+      type: object
+      additionalProperties: false
+      required: [note]
+      properties:
+        note: { type: string, minLength: 1, maxLength: 2000 }
+    BreachSignOff:
+      type: object
+      additionalProperties: false
+      required: [boardSha256, principalSha256]
+      properties:
+        boardSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: The `boardSha256` that came with the drafts the officer read. }
+        principalSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: The `principalSha256` that came with the drafts the officer read. }
+    BreachDrafts:
+      type: object
+      required: [boardNotification, principalNotice, boardDeadline, boardSha256, principalSha256]
+      properties:
+        boardNotification: { type: string }
+        principalNotice: { type: string }
+        boardDeadline: { type: string, format: date-time }
+        boardSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: SHA-256 of `boardNotification`. A sign-off must carry it. }
+        principalSha256: { type: string, pattern: '^[0-9a-f]{64}$', description: SHA-256 of `principalNotice`. A sign-off must carry it. }
+    Breach:
+      type: object
+      required: [id, state, title, description, discoveredAt, occurredAt, nature, dataCategories, approxPrincipalsAffected, likelyConsequences, measuresTaken, reportedAt, reportedBy, boardDeadline, boardOverdue, boardNotifiedLate, signedOffAt, signedOffBy, boardNotifiedAt, boardReference, principalsNotifiedAt, principalsHow, principalsCount, closedAt, closingNote]
+      properties:
+        id: { type: string, format: uuid }
+        state: { enum: [reported, signed_off, board_notified, closed] }
+        title: { type: string }
+        description: { type: string }
+        discoveredAt: { type: string, format: date-time }
+        occurredAt: { type: [string, "null"], format: date-time }
+        nature:
+          type: array
+          items: { enum: [confidentiality, integrity, availability] }
+        dataCategories:
+          type: array
+          items: { type: string }
+        approxPrincipalsAffected: { type: [integer, "null"] }
+        likelyConsequences: { type: string }
+        measuresTaken: { type: string }
+        reportedAt: { type: string, format: date-time }
+        reportedBy: { type: string }
+        boardDeadline: { type: string, format: date-time, description: 72 hours after `discoveredAt`. A working default that has not been confirmed against the Rules. }
+        boardOverdue: { type: boolean, description: The Board has not been told and the deadline has passed. }
+        boardNotifiedLate: { type: [boolean, "null"], description: The Board was told after the deadline. Null until it has been told. }
+        signedOffAt: { type: [string, "null"], format: date-time }
+        signedOffBy: { type: [string, "null"] }
+        boardNotifiedAt: { type: [string, "null"], format: date-time }
+        boardReference: { type: [string, "null"] }
+        principalsNotifiedAt: { type: [string, "null"], format: date-time }
+        principalsHow: { type: [string, "null"] }
+        principalsCount: { type: [integer, "null"] }
+        closedAt: { type: [string, "null"], format: date-time }
+        closingNote: { type: [string, "null"] }
     StaffSession:
       type: object
       required: [token, expiresAt, role, mustChangePassword]
